@@ -15,6 +15,11 @@ pub struct BackendInfo {
     pub process_names: &'static [&'static str],
     /// Label of the credential this backend needs (e.g. "Discord token"); `None` = none.
     pub credential_label: Option<&'static str>,
+    /// Switched on in a new configuration. Configurations without an entry for this backend
+    /// (e.g. from 0.1.0) always treat it as switched on.
+    pub enabled_by_default: bool,
+    /// Shown next to the switch in the settings window.
+    pub risk_note: Option<&'static str>,
 }
 
 pub const DISCORD: &str = "discord";
@@ -26,12 +31,21 @@ pub const ALL: &[BackendInfo] = &[
         display_name: "Discord",
         process_names: &["Discord.exe"],
         credential_label: Some("Discord token"),
+        // Off for new installations: automating a user account is very likely against
+        // Discord's Terms of Service (README warning).
+        enabled_by_default: false,
+        risk_note: Some(
+            "Uses your Discord user token. This is very likely against Discord's Terms of \
+             Service and may get your account restricted. Use at your own risk.",
+        ),
     },
     BackendInfo {
         id: STEAM,
         display_name: "Steam",
         process_names: &["steam.exe"],
         credential_label: None,
+        enabled_by_default: true,
+        risk_note: None,
     },
 ];
 

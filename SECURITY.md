@@ -23,7 +23,8 @@ get an answer as soon as possible; this is a spare-time project, so please allow
 - Only if storing it there fails, awayd falls back to a **plain-text file**
   `state\credentials\discord.secret` next to the executables (portable mode) or under
   `%APPDATA%\awayd\state\credentials\`. A warning is written to the log in that case.
-- Without a token, awayd never contacts Discord.
+- With Discord switched off (the default for new installations) or without a token, awayd never
+  contacts Discord and does not read the stored token.
 
 **Local control interface**
 
@@ -36,7 +37,8 @@ get an answer as soon as possible; this is a spare-time project, so please allow
 
 awayd only contacts:
 
-- `https://discord.com/api/...` – to set your status (only with a token),
+- `https://discord.com/api/...` – to set your status (only when Discord is switched on and a
+  token is stored),
 - `https://date.nager.at` – to download public holidays for the configured country.
 
 It sends no telemetry and no other data.

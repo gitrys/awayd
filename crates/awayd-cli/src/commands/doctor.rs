@@ -1,8 +1,9 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 
 use anyhow::Result;
+use awayd_core::backends;
 use awayd_core::config::paths;
-use awayd_core::config::schema::DayWindow;
+use awayd_core::config::schema::{AppConfig, DayWindow};
 use awayd_core::config::{self};
 use awayd_core::schedule::{schedule_days, DAY_LABELS};
 use awayd_core::status::{BackendApplyRecord, BackendApplyStatus, StatusSnapshot};
@@ -38,6 +39,22 @@ fn print_schedule_days(days: &[DayWindow; 7]) {
     for (i, day) in days.iter().enumerate() {
         println!("{}", format_day_line(day, DAY_LABELS[i]));
     }
+}
+
+/// "discord off, steam on".
+fn services_line(cfg: &AppConfig) -> String {
+    backends::ALL
+        .iter()
+        .map(|b| {
+            let state = if cfg.backend_enabled(b.id) {
+                "on"
+            } else {
+                "off"
+            };
+            format!("{} {state}", b.id)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// "sent", "skipped (steam is not running)", "failed (401 unauthorized)".
@@ -116,6 +133,7 @@ pub async fn doctor(json: bool, pretty: bool) -> Result<()> {
                     if let Ok(s) = serde_json::from_str::<StatusSnapshot>(&raw) {
                         print_pretty_table(&s);
                         if let Ok(cfg) = &cfg_loaded {
+                            println!("  {:<16} {}", "services:", services_line(cfg));
                             let cc = cfg.schedule.country.to_uppercase();
                             if let Ok((ready, y0, y1, fetched, msg)) =
                                 client.holiday_data_status(&cc).await
@@ -157,6 +175,7 @@ pub async fn doctor(json: bool, pretty: bool) -> Result<()> {
             "  country={} subdiv={}",
             cfg.schedule.country, cfg.schedule.subdiv
         );
+        println!("  services: {}", services_line(&cfg));
         print_schedule_days(&schedule_days(&cfg.schedule));
     }
     Ok(())

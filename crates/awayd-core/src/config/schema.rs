@@ -1,6 +1,8 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 //! `config.toml` serde schema (versioned).
 
+use std::collections::BTreeMap;
+
 use chrono::NaiveTime;
 use serde::{Deserialize, Serialize};
 
@@ -9,8 +11,11 @@ pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub schema_version: u32,
+    /// `[backends.<id>]` per service (`awayd_core::backends`). A service without entry is
+    /// switched on, so configurations from 0.1.0 (no section) keep managing both services.
+    /// The empty `[discord]` section of 0.1.0 is ignored when read.
     #[serde(default)]
-    pub discord: DiscordSection,
+    pub backends: BTreeMap<String, BackendSettings>,
     #[serde(default)]
     pub schedule: ScheduleSection,
     #[serde(default)]
@@ -19,8 +24,42 @@ pub struct AppConfig {
     pub advanced: AdvancedSection,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DiscordSection {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl AppConfig {
+    /// Service `id` is switched on (no entry = on).
+    pub fn backend_enabled(&self, id: &str) -> bool {
+        self.backends.get(id).is_none_or(|b| b.enabled)
+    }
+
+    pub fn set_backend_enabled(&mut self, id: &str, enabled: bool) {
+        self.backends
+            .insert(id.to_string(), BackendSettings { enabled });
+    }
+}
+
+/// Explicit entry for every service with its default (new configurations).
+fn default_backends() -> BTreeMap<String, BackendSettings> {
+    crate::backends::ALL
+        .iter()
+        .map(|b| {
+            (
+                b.id.to_string(),
+                BackendSettings {
+                    enabled: b.enabled_by_default,
+                },
+            )
+        })
+        .collect()
+}
 
 fn default_subdiv() -> String {
     "BW".to_string()
@@ -177,7 +216,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
-            discord: DiscordSection::default(),
+            backends: default_backends(),
             schedule: ScheduleSection::default(),
             mode: ModeSection {
                 kind: default_mode_kind(),

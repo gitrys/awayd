@@ -56,3 +56,22 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   start → "Not saved: vacation …: start after end", `config.toml` unchanged.
 - **Holiday coverage:** a holiday file without the current/next year → status/tooltip warning
   "does not cover <year>", status still applied.
+
+## 2026-11-22 – Backend abstraction (GitHub #3) and service switches (legacy issue 42)
+
+- **Existing config:** start the new build with the 0.1.0 `config.toml` (no `[backends]`) →
+  Steam and Discord are both on (Settings → Scheduler → Services), behaviour unchanged.
+- **New install:** empty portable folder → wizard shows Steam on, Discord off, no token field;
+  after "Finish" `config.toml` has `[backends.discord] enabled = false`; status has no
+  "Discord token missing" warning, log has no Discord request.
+- **Switch Discord on:** tick Discord → risk note and token field appear; enter the token →
+  "Discord token saved", Credential Manager has `awayd` / user `discord`; status applied to
+  Discord. Untick → Discord is no longer contacted (log), token stays stored.
+- **Switch Steam off:** untick Steam, start Steam → log shows `steam.exe started` but no
+  `presence sent` for Steam.
+- **All off:** untick both → hint "No service is switched on"; status still ok, nothing sent.
+- **Status per service:** `awayctl doctor --pretty` → `services: discord …, steam …` and one
+  line per service under `last_apply` (sent / skipped (…) / failed (…)); tray "Last apply:
+  failed — <service>: …" after an invalid token.
+- **Typo in config:** `[backends.discrod]` → settings/daemon reject the config with
+  "unknown service [backends.discrod] (known: discord, steam)".

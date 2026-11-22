@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Steam and Discord can be switched on and off individually (Settings → Scheduler → Services,
+  wizard, or `[backends.<id>] enabled` in `config.toml`). A switched-off service is never
+  contacted and its token is not read. `awayctl doctor` shows which services are on.
+- New installations start with **Discord off** and Steam on; the settings show the Terms of
+  Service risk next to the Discord switch. Configurations from 0.1.0 (no `[backends]` section)
+  keep both services on.
+- `config.toml` with an unknown service id (e.g. a typo in `[backends.…]`) is rejected with the
+  list of known services.
+
 ### Changed
 
 - Steam and Discord are now two implementations of one backend interface; the scheduler, the

@@ -60,6 +60,14 @@ foreach ($b in $Bins) {
 $Example = @"
 schema_version = 1
 
+# Services awayd manages. Discord uses your user token (very likely against Discord's Terms of
+# Service, see README); it is off by default. A service without entry counts as switched on.
+[backends.discord]
+enabled = false
+
+[backends.steam]
+enabled = true
+
 [schedule]
 country = "DE"
 subdiv = "BW"

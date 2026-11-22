@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use awayd_core::backends as backend_table;
+use awayd_core::backends::{self as backend_table, BackendInfo};
+use awayd_core::config::schema::AppConfig;
 use awayd_core::status::{
     BackendApplyRecord, BackendApplyStatus, LastApplyRecord, StatusSnapshot, SOURCE_ERROR,
     STATUS_SCHEMA_VERSION,
@@ -47,11 +48,22 @@ type BackendApplied = HashMap<&'static str, BackendState>;
 const APPLY_RETRY_INITIAL: Duration = Duration::from_secs(30);
 const APPLY_RETRY_MAX: Duration = Duration::from_secs(120);
 
-/// Backends of this tick, with their stored credentials. A backend whose credential is
-/// missing is still listed (it skips itself); the missing credential is reported in `errors`.
-async fn load_backends(errors: &mut Vec<String>) -> anyhow::Result<Vec<Box<dyn Backend>>> {
+/// Services switched on in `app`, in table order.
+fn enabled_backends(app: &AppConfig) -> impl Iterator<Item = &'static BackendInfo> + '_ {
+    backend_table::ALL
+        .iter()
+        .filter(move |b| app.backend_enabled(b.id))
+}
+
+/// Backends of this tick (switched-on services only, so switched-off ones are never
+/// contacted and their credential is not read). A backend whose credential is missing is
+/// still listed (it skips itself); the missing credential is reported in `errors`.
+async fn load_backends(
+    app: &AppConfig,
+    errors: &mut Vec<String>,
+) -> anyhow::Result<Vec<Box<dyn Backend>>> {
     let mut list = Vec::new();
-    for info in backend_table::ALL {
+    for info in enabled_backends(app) {
         let credential = match info.credential_label {
             Some(label) => {
                 let c = secret::get_credential(info.id).await?.unwrap_or_default();
@@ -254,7 +266,7 @@ async fn run_one_tick(
 
     let tick: anyhow::Result<Duration> = async {
         let app = config::load_config(cfg_path).context("load config")?;
-        let backends = load_backends(&mut errors).await?;
+        let backends = load_backends(&app, &mut errors).await?;
         let work = build_config(&app).map_err(|e| anyhow::anyhow!(e))?;
         let raw = toml::to_string_pretty(&app).context("serialize config")?;
         *config_toml.write().await = raw;
@@ -629,6 +641,21 @@ mod tests {
         );
         assert_eq!(a["games"].online, None);
         assert!(plan_apply(false, false, false, &a, &b).contains("games"));
+    }
+
+    #[test]
+    fn switched_off_services_are_not_loaded() {
+        let mut app = AppConfig::default();
+        app.set_backend_enabled(backend_table::DISCORD, false);
+        app.set_backend_enabled(backend_table::STEAM, true);
+        let ids: Vec<_> = enabled_backends(&app).map(|b| b.id).collect();
+        assert_eq!(ids, vec![backend_table::STEAM]);
+
+        app.set_backend_enabled(backend_table::STEAM, false);
+        assert_eq!(enabled_backends(&app).count(), 0);
+
+        app.backends.clear();
+        assert_eq!(enabled_backends(&app).count(), backend_table::ALL.len());
     }
 
     #[test]

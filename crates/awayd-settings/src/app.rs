@@ -646,14 +646,42 @@ impl AwaydSettingsApp {
         event
     }
 
-    /// Label and field for every backend that needs a credential.
-    fn credential_fields_ui(&mut self, ui: &mut egui::Ui, widget_id: &str, hint: &str) {
-        for b in credential_backends() {
-            let label = b.credential_label.unwrap_or("Credential");
-            ui.label(format!("{label} ({hint}):"));
-            let ev = self.show_credential_field(ui, b.id, widget_id);
-            self.handle_credential_event(b.id, ev);
+    /// One switch per service with its risk note and, while switched on, its credential
+    /// field. Returns true when a switch changed (the caller decides when to save).
+    fn services_ui(&mut self, ui: &mut egui::Ui, widget_id: &str, credential_hint: &str) -> bool {
+        let mut changed = false;
+        ui.label(egui::RichText::new("Services").strong());
+        for b in backends::ALL {
+            let mut on = self.config.backend_enabled(b.id);
+            if ui
+                .checkbox(&mut on, b.display_name)
+                .on_hover_text(format!("Let awayd set your {} status", b.display_name))
+                .changed()
+            {
+                self.config.set_backend_enabled(b.id, on);
+                changed = true;
+            }
+            ui.indent(b.id, |ui| {
+                if let Some(note) = b.risk_note {
+                    ui.colored_label(ui.visuals().warn_fg_color, note);
+                }
+                if let (true, Some(label)) = (on, b.credential_label) {
+                    ui.label(format!("{label} ({credential_hint}):"));
+                    let ev = self.show_credential_field(ui, b.id, widget_id);
+                    self.handle_credential_event(b.id, ev);
+                }
+            });
         }
+        if !backends::ALL
+            .iter()
+            .any(|b| self.config.backend_enabled(b.id))
+        {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "No service is switched on: awayd changes no status.",
+            );
+        }
+        changed
     }
 
     fn credential_input_pending(&self, id: &str) -> bool {
@@ -1294,7 +1322,8 @@ impl AwaydSettingsApp {
                 }
             }
             1 => {
-                self.credential_fields_ui(
+                // Switches are saved with the region/work hours steps and on "Finish".
+                self.services_ui(
                     ui,
                     "wiz_credential",
                     "stored in Credential Manager, not config.toml",
@@ -1368,7 +1397,10 @@ impl AwaydSettingsApp {
             schedule_changed = true;
         }
 
-        self.credential_fields_ui(ui, "sched_credential", "leave empty to keep existing");
+        ui.separator();
+        if self.services_ui(ui, "sched_credential", "leave empty to keep existing") {
+            schedule_changed = true;
+        }
 
         ui.separator();
         if self.vacations_ui(ui) {

@@ -10,8 +10,9 @@ overrides ("stay invisible for 2 hours").
 > **Discord: use at your own risk.** awayd changes your Discord status through Discord's web API
 > with **your user token** (the token of your normal Discord account) and a browser user agent.
 > Automating a user account this way is very likely against Discord's Terms of Service
-> ("self-bot") and may get your account restricted or banned. If you do not want that risk, do
-> not enter a Discord token: awayd then only manages Steam.
+> ("self-bot") and may get your account restricted or banned. Discord is therefore **switched
+> off** in a new installation; switch it on (Settings → Scheduler → Services) only if you accept
+> that risk.
 
 awayd is an independent project. It is **not affiliated with, endorsed by or sponsored by Valve
 Corporation (Steam) or Discord Inc.** "Steam" and "Discord" are trademarks of their respective
@@ -19,6 +20,7 @@ owners and are used here only to describe what the program works with.
 
 ## Features
 
+- Choose the services awayd manages: Steam (on by default) and Discord (off by default)
 - Work hours per weekday, public holidays (country and region), vacation ranges
 - Manual override from the tray or CLI, either for a fixed time or until the next scheduled change
 - Re-applies the status when Discord or Steam starts and after resume from standby
@@ -43,7 +45,21 @@ owners and are used here only to describe what the program works with.
    your PC" on the first start. Choose **More info → Run anyway** if you trust the download
    (verified checksum/signature).
 3. Open **Settings** from the tray menu (or run `awayd-settings.exe`) and complete the wizard:
-   country/region, work hours and, optionally, the Discord token (see the warning above).
+   services, country/region and work hours. The Discord token is only asked for when you switch
+   Discord on (see the warning above).
+
+   The services can be changed later in **Settings → Scheduler → Services** or in
+   `config\config.toml`:
+
+   ```toml
+   [backends.discord]
+   enabled = false
+
+   [backends.steam]
+   enabled = true
+   ```
+
+   A service without entry counts as switched on (configurations from 0.1.0 keep both).
 4. Start awayd automatically at login: tick **Settings → Scheduler → Start awayd at login**, or
    use the CLI:
 
