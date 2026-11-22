@@ -73,7 +73,7 @@ fn icon_from_index(idx: usize) -> Icon {
 }
 
 fn init_rgba_cache() -> [Vec<u8>; 5] {
-    std::array::from_fn(|i| load_icon_rgba(i))
+    std::array::from_fn(load_icon_rgba)
 }
 
 fn load_icon_rgba(index: usize) -> Vec<u8> {
@@ -126,9 +126,9 @@ fn unpremultiply_alpha(pixels: &mut [u8]) {
         if a >= 0.999 {
             continue;
         }
-        px[0] = ((px[0] as f32 / a).round() as u8).min(255);
-        px[1] = ((px[1] as f32 / a).round() as u8).min(255);
-        px[2] = ((px[2] as f32 / a).round() as u8).min(255);
+        px[0] = (px[0] as f32 / a).round() as u8;
+        px[1] = (px[1] as f32 / a).round() as u8;
+        px[2] = (px[2] as f32 / a).round() as u8;
     }
 }
 

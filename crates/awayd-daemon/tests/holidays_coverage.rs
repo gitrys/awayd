@@ -5,7 +5,7 @@
 //! One test function on purpose: it sets the process-wide APPDATA, and every file in
 //! `tests/` is its own process.
 
-use awayd_daemon::holidays::{load_holidays_or_empty, HolidayLookup};
+use awayd_daemon::holidays::load_holidays_or_empty;
 use chrono::NaiveDate;
 
 const DE_FIXTURE: &str = include_str!("fixtures/de_v2_sample.json"); // covers 2026 only

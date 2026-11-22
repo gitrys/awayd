@@ -124,7 +124,7 @@ pub fn resolve_country_bytes(country: &str) -> Option<(Vec<u8>, HolidaySource)> 
     None
 }
 
-pub fn parse_holiday_file(raw: &[u8]) -> Result<HolidayFile, String> {
+pub(crate) fn parse_holiday_file(raw: &[u8]) -> Result<HolidayFile, String> {
     let file: HolidayFile = serde_json::from_slice(raw).map_err(|e| e.to_string())?;
     if file.schema_version != 1 && file.schema_version != 2 && file.schema_version != 3 {
         return Err(format!(
@@ -135,7 +135,7 @@ pub fn parse_holiday_file(raw: &[u8]) -> Result<HolidayFile, String> {
     Ok(file)
 }
 
-pub fn file_year_range(file: &HolidayFile) -> (i32, i32) {
+pub(crate) fn file_year_range(file: &HolidayFile) -> (i32, i32) {
     if let (Some(a), Some(b)) = (file.year_min, file.year_max) {
         return (a, b);
     }

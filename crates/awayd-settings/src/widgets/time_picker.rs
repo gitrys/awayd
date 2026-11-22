@@ -43,24 +43,8 @@ fn parse_time(s: &str) -> Option<NaiveTime> {
         .ok()
 }
 
-/// Label above time edit + clock button. Returns true when time changed (blur or OK).
-pub fn show_time_field(
-    ui: &mut egui::Ui,
-    id_source: &str,
-    label: &str,
-    time: &mut NaiveTime,
-    state: &mut TimeFieldState,
-) -> bool {
-    ui.vertical(|ui| {
-        if !label.is_empty() {
-            ui.label(label);
-        }
-        show_time_field_inline(ui, id_source, time, state)
-    })
-    .inner
-}
-
-/// Single-line time edit + clock button (for grids and toolbar rows).
+/// Single-line time edit + clock button (for grids and toolbar rows). Returns true when the
+/// time changed (Enter / leaving the field, or "OK" in the clock popup).
 pub fn show_time_field_inline(
     ui: &mut egui::Ui,
     id_source: &str,

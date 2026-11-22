@@ -152,7 +152,7 @@ pub fn parse_capture_level(s: &str) -> Level {
 }
 
 pub fn capture_level_filter_spec(level: Level) -> String {
-    format!("{}", level_as_filter_str(level))
+    level_as_filter_str(level).to_string()
 }
 
 fn level_as_filter_str(level: Level) -> &'static str {

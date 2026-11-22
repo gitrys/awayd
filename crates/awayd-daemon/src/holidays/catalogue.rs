@@ -15,7 +15,7 @@ pub fn subdivisions_for_country(country: &str) -> Vec<String> {
     subdivisions_from_file(&file)
 }
 
-pub fn subdivisions_from_file(file: &HolidayFile) -> Vec<String> {
+pub(crate) fn subdivisions_from_file(file: &HolidayFile) -> Vec<String> {
     let mut set: HashSet<String> = HashSet::new();
     for y in file.by_year.values() {
         for k in y.by_subdiv.keys() {

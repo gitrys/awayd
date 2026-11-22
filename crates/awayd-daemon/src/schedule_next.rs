@@ -95,7 +95,7 @@ mod tests {
         }
     }
 
-    fn cfg_with_days(mut days: [DayWindow; 7]) -> Config {
+    fn cfg_with_days(days: [DayWindow; 7]) -> Config {
         Config {
             schedule: ScheduleConfig {
                 country: "DE".into(),

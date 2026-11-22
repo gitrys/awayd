@@ -4,7 +4,7 @@
 //! One test function on purpose: it sets the process-wide APPDATA, and every file in
 //! `tests/` is its own process.
 
-use awayd_daemon::holidays::{load_holiday_nearby_years, load_holidays_or_empty, HolidayLookup};
+use awayd_daemon::holidays::{load_holiday_nearby_years, load_holidays_or_empty};
 use chrono::NaiveDate;
 
 #[test]

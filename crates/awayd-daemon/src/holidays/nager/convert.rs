@@ -35,7 +35,7 @@ fn record_from_holiday(h: &PublicHoliday) -> HolidayRecord {
 }
 
 /// Build one year's `by_subdiv` from Nager holidays.
-pub fn year_from_holidays(
+pub(crate) fn year_from_holidays(
     country: &str,
     holidays: &[PublicHoliday],
 ) -> HashMap<String, SubdivEntry> {
@@ -100,7 +100,10 @@ pub fn year_from_holidays(
 }
 
 /// Merge multiple years into a v3 [`HolidayFile`].
-pub fn build_holiday_file(country: &str, years: &[(i32, Vec<PublicHoliday>)]) -> HolidayFile {
+pub(crate) fn build_holiday_file(
+    country: &str,
+    years: &[(i32, Vec<PublicHoliday>)],
+) -> HolidayFile {
     let country = country.to_uppercase();
     let mut by_year = HashMap::new();
     let mut year_keys: Vec<i32> = Vec::new();

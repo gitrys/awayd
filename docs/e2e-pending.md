@@ -97,3 +97,9 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 - **Log level at runtime:** set `[advanced] log_min_level = "warn"` and save in the settings (or
   Reload) → log line "log capture level applied", no more INFO lines afterwards; back to
   "debug". (Timestamps with offset and the short time in the log view: verified 2026-11-22.)
+
+## 2026-11-22 – Plan T (tray without polling)
+
+- **Tray reacts without polling:** status change (override from the tray, or a schedule change)
+  → icon and tooltip update at once; tray menu opens and its actions work; while the menu is
+  open a status change is shown at the latest when the menu closes.

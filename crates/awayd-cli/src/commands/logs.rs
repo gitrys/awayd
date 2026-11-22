@@ -38,7 +38,7 @@ pub fn logs(tail: usize, grep: Option<String>, level: Option<String>) -> Result<
 
     let mut shown = 0usize;
     for line in slice {
-        let Some(entry) = parse_log_line(&line) else {
+        let Some(entry) = parse_log_line(line) else {
             continue;
         };
         let (verbose, warning, errors) = level_filter.buckets();

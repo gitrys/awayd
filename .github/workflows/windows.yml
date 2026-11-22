@@ -31,4 +31,8 @@ jobs:
         with:
           toolchain: "1.88"
       - name: cargo check
+        # Warnings are errors here: the pinned toolchain keeps the lint set fixed, so a new
+        # stable release cannot break the build with new lints.
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo check --workspace --all-targets --locked

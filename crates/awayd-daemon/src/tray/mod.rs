@@ -11,21 +11,16 @@ use tokio::sync::watch;
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconBuilder;
 use tray_icon::{MouseButtonState, TrayIconEvent};
+use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
+    DispatchMessageW, GetMessageW, PostThreadMessageW, TranslateMessage, MSG, WM_APP,
 };
 
 use crate::service::SchedulerService;
 
-fn pump_win32_messages() {
-    unsafe {
-        let mut msg = MSG::default();
-        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).into() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-}
+/// Thread message to the tray thread: the status changed.
+const WM_APP_STATUS: u32 = WM_APP + 1;
 
 fn apply_status_ui(tray: &tray_icon::TrayIcon, tray_menu: &menu::TrayMenu, s: &StatusSnapshot) {
     tray_menu.refresh_status_lines(s);
@@ -44,7 +39,7 @@ pub fn run_tray(
         .with_icon(icon::icon_off())
         .with_menu(Box::new(tray_menu.menu.clone()))
         .build()?;
-    let _ = tray.set_show_menu_on_left_click(true);
+    tray.set_show_menu_on_left_click(true);
 
     let mut latest: Option<StatusSnapshot> = None;
 
@@ -57,8 +52,38 @@ pub fn run_tray(
         }
     }
 
+    // The thread sleeps in `GetMessageW` until a window message arrives (tray click, menu)
+    // instead of polling every 16 ms. Status changes come from another thread: a task posts a
+    // thread message to wake it. Windows drops thread messages while a modal loop runs (tray
+    // menu open), so the status channel is also checked after every other message; a change
+    // during an open menu is shown at the latest when the menu closes.
+    let tray_thread = unsafe { GetCurrentThreadId() };
+    let mut wake_rx = status_rx.clone();
+    rt.spawn(async move {
+        loop {
+            let closed = wake_rx.changed().await.is_err();
+            // SAFETY: posting a message to a thread id; fails harmlessly if the thread is gone.
+            unsafe {
+                let _ = PostThreadMessageW(tray_thread, WM_APP_STATUS, WPARAM(0), LPARAM(0));
+            }
+            if closed {
+                // One last wake-up so the tray sees the closed channel and ends.
+                break;
+            }
+        }
+    });
+
+    let mut msg = MSG::default();
     loop {
-        pump_win32_messages();
+        // SAFETY: standard Win32 message loop on the thread that owns the tray window.
+        match unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 {
+            0 => return Ok(()), // WM_QUIT
+            -1 => anyhow::bail!("GetMessageW failed: {}", std::io::Error::last_os_error()),
+            _ => unsafe {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            },
+        }
 
         while status_rx
             .has_changed()
@@ -70,19 +95,20 @@ pub fn run_tray(
                 apply_status_ui(&tray, &tray_menu, &s);
             }
         }
-        if let Ok(event) = MenuEvent::receiver().try_recv() {
+        // Menu and tray events are queued while their window messages are dispatched.
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
             menu::handle_event(event, service.clone(), rt.clone());
         }
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click { button_state, .. } = event {
-                if button_state == MouseButtonState::Up {
-                    if let Some(ref s) = latest {
-                        tray_menu.refresh_status_lines(s);
-                    }
+        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+            if let TrayIconEvent::Click {
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                if let Some(ref s) = latest {
+                    tray_menu.refresh_status_lines(s);
                 }
             }
         }
-
-        std::thread::sleep(std::time::Duration::from_millis(16));
     }
 }

@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stopping", so restarts and crashes are visible; a second instance logs that it exits.
 - The settings log view no longer misses or garbles lines when the log rotates and the new
   file is already larger than the old read position.
+- The tray no longer wakes up every 16 ms: it waits for window messages and is woken on status
+  changes (fewer CPU wake-ups, relevant for laptop battery life).
+- Build without compiler warnings (unused widgets and the unused `image` / `thiserror`
+  dependencies removed); CI now treats warnings as errors in the MSRV check.
 
 ### Changed
 

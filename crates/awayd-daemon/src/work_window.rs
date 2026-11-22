@@ -97,7 +97,7 @@ mod tests {
         }
     }
 
-    fn sched_with_days(mut days: [DayWindow; 7]) -> ScheduleConfig {
+    fn sched_with_days(days: [DayWindow; 7]) -> ScheduleConfig {
         ScheduleConfig {
             country: "DE".into(),
             subdiv: "BW".into(),

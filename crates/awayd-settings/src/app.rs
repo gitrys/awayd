@@ -519,7 +519,7 @@ impl AwaydSettingsApp {
             rect,
             2.0,
             placeholder_fill,
-            egui::Stroke::new(1.0, placeholder_stroke.color.gamma_multiply(0.25)),
+            egui::Stroke::new(1.0_f32, placeholder_stroke.color.gamma_multiply(0.25)),
         );
 
         let Some(status) = &self.status else {
@@ -562,10 +562,8 @@ impl AwaydSettingsApp {
     }
 
     fn normalize_vacation_labels(&mut self) {
-        let len = self.config.schedule.vacations.len();
-        for i in 0..len {
-            let raw = self.config.schedule.vacations[i].label.clone();
-            self.config.schedule.vacations[i].label = Self::resolve_vacation_label(&raw, i);
+        for (i, v) in self.config.schedule.vacations.iter_mut().enumerate() {
+            v.label = Self::resolve_vacation_label(&v.label, i);
         }
     }
 
