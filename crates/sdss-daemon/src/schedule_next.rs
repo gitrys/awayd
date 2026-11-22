@@ -1,9 +1,10 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 //! Next schedule flip (candidate-boundary algorithm).
 
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone};
 
 use crate::holidays::HolidayLookup;
+use crate::local_time::{resolve_local, trim_to_minute};
 use crate::work_window::{self, Config, ScheduleConfig};
 
 const DEFAULT_MAX_DAYS: i64 = 14;
@@ -16,12 +17,15 @@ fn date_blocked(
     work_window::date_in_vacation_ranges(d, &sched.vacation_ranges) || de.is_holiday(d)
 }
 
-fn flip_candidates(
+/// Wall-clock boundaries are resolved DST-safe (see [`resolve_local`]); `tz` is a parameter
+/// so gap/fold days can be tested with fixed time zones.
+fn flip_candidates<Tz: TimeZone>(
+    tz: &Tz,
     cfg: &ScheduleConfig,
     start_date: NaiveDate,
     max_days: i64,
     de: &dyn HolidayLookup,
-) -> Vec<DateTime<Local>> {
+) -> Vec<DateTime<Tz>> {
     let mut candidates = Vec::new();
     for day_offset in 0..=max_days {
         let d = start_date + Duration::days(day_offset);
@@ -29,18 +33,13 @@ fn flip_candidates(
         let day = &cfg.days[iso - 1];
 
         if day.enabled && !date_blocked(d, cfg, de) {
-            candidates.push(Local.from_local_datetime(&d.and_time(day.start)).unwrap());
+            candidates.push(resolve_local(tz, d.and_time(day.start)));
             let end_plus = d.and_time(day.end) + Duration::minutes(1);
-            candidates.push(Local.from_local_datetime(&end_plus).unwrap());
+            candidates.push(resolve_local(tz, end_plus));
         }
 
-        candidates.push(
-            Local
-                .from_local_datetime(
-                    &(d + Duration::days(1)).and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-                )
-                .unwrap(),
-        );
+        let midnight = (d + Duration::days(1)).and_time(NaiveTime::MIN);
+        candidates.push(resolve_local(tz, midnight));
     }
     candidates.sort();
     candidates.dedup();
@@ -54,13 +53,13 @@ pub fn next_schedule_flip_after(
     de: &dyn HolidayLookup,
     max_days: i64,
 ) -> Result<DateTime<Local>, String> {
-    let now = now.with_second(0).unwrap().with_nanosecond(0).unwrap();
+    let now = trim_to_minute(now);
     let baseline = work_window::want_work_mode(cfg, now, de);
     let horizon = now + Duration::days(max_days);
     let sched = &cfg.schedule;
 
-    for t in flip_candidates(sched, now.date_naive(), max_days, de) {
-        let t = t.with_second(0).unwrap().with_nanosecond(0).unwrap();
+    for t in flip_candidates(&Local, sched, now.date_naive(), max_days, de) {
+        let t = trim_to_minute(t);
         if t <= now {
             continue;
         }
@@ -88,7 +87,7 @@ pub fn next_schedule_flip_after_default(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Local, TimeZone};
+    use chrono::{Local, TimeZone, Timelike};
     use sdss_core::config::schema::DayWindow;
     use sdss_core::schedule::default_week_days;
 
@@ -127,5 +126,43 @@ mod tests {
         let next = next_schedule_flip_after_default(&cfg, now, &holi).unwrap();
         assert_eq!(next.hour(), 14);
         assert_eq!(next.minute(), 1);
+    }
+
+    /// Midnight does not exist on DST-start day in Santiago
+    /// (2027-09-05). The old `from_local_datetime(..).unwrap()` panicked for every tick
+    /// whose 14-day look-ahead contained that day.
+    #[test]
+    fn flip_candidates_survive_midnight_dst_gap() {
+        use chrono_tz::America::Santiago;
+        let cfg = cfg_with_days(default_week_days());
+        let start = NaiveDate::from_ymd_opt(2027, 8, 30).unwrap();
+        let gap_midnight = NaiveDate::from_ymd_opt(2027, 9, 5).unwrap().and_time(NaiveTime::MIN);
+        assert!(
+            Santiago.from_local_datetime(&gap_midnight).earliest().is_none(),
+            "precondition: midnight is in a gap"
+        );
+
+        let c = flip_candidates(&Santiago, &cfg.schedule, start, 14, &NoHolidays);
+
+        let resolved = NaiveDate::from_ymd_opt(2027, 9, 5).unwrap().and_hms_opt(1, 0, 0).unwrap();
+        assert!(c.iter().any(|t| t.naive_local() == resolved), "gap resolved to 01:00");
+        assert!(c.windows(2).all(|w| w[0] < w[1]), "sorted and deduplicated");
+    }
+
+    /// A schedule boundary inside the Berlin autumn fold (02:30 twice).
+    #[test]
+    fn flip_candidates_survive_fold_boundary() {
+        use chrono_tz::Europe::Berlin;
+        let mut days = default_week_days();
+        days[6].enabled = true; // Sunday 2027-10-31
+        days[6].start = NaiveTime::from_hms_opt(2, 30, 0).unwrap();
+        let cfg = cfg_with_days(days);
+        let start = NaiveDate::from_ymd_opt(2027, 10, 31).unwrap();
+
+        let c = flip_candidates(&Berlin, &cfg.schedule, start, 0, &NoHolidays);
+
+        let fold = start.and_hms_opt(2, 30, 0).unwrap();
+        let hit = c.iter().find(|t| t.naive_local() == fold).expect("fold boundary present");
+        assert_eq!(hit.naive_utc(), start.and_hms_opt(0, 30, 0).unwrap(), "earlier instant");
     }
 }

@@ -3,6 +3,7 @@
 
 pub mod apply;
 pub mod holidays;
+pub mod local_time;
 pub mod network_probe;
 pub mod override_state;
 pub mod platform;

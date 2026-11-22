@@ -114,6 +114,32 @@ pub struct SdssSettingsApp {
     active_tab: SettingsTab,
     log_view: Option<LogViewState>,
     log_popout_open: bool,
+    /// Set when an existing `config.toml` could not be read; blocks saving so the shown
+    /// defaults never overwrite the real file.
+    config_error: Option<String>,
+}
+
+/// Decide which config the UI may edit.
+///
+/// - `Ok(None)`: no `config.toml` yet (first start): keep the defaults, saving is allowed.
+/// - `Ok(Some(cfg))`: file read and valid.
+/// - `Err(msg)`: file exists but could not be read or is invalid: saving must stay blocked.
+fn resolve_loaded_config(
+    file_exists: bool,
+    text: Result<String, String>,
+) -> Result<Option<AppConfig>, String> {
+    if !file_exists {
+        return Ok(None);
+    }
+    let raw = text?;
+    sdss_core::config::parse_config(&raw)
+        .map(Some)
+        .map_err(|e| format!("{e:#}"))
+}
+
+enum ConfigErrorAction {
+    Reload,
+    BackupAndStartOver,
 }
 
 impl SdssSettingsApp {
@@ -171,6 +197,7 @@ impl SdssSettingsApp {
             active_tab: SettingsTab::Scheduler,
             log_view: None,
             log_popout_open: false,
+            config_error: None,
         };
         app.reload();
         app
@@ -782,14 +809,26 @@ impl SdssSettingsApp {
         }
     }
 
+    fn apply_loaded_config(&mut self, loaded: Result<Option<AppConfig>, String>) {
+        match loaded {
+            Ok(Some(c)) => {
+                self.config = c;
+                self.config_error = None;
+            }
+            Ok(None) => self.config_error = None,
+            Err(e) => self.config_error = Some(e),
+        }
+    }
+
     fn reload(&mut self) {
         self.daemon_ok = self.rt.block_on(self.ipc.ping());
+        let file_exists = paths::config_file().is_file();
         if self.daemon_ok {
-            if let Ok(toml) = self.rt.block_on(self.ipc.get_config_toml()) {
-                if let Ok(c) = toml::from_str(&toml) {
-                    self.config = c;
-                }
-            }
+            let text = self
+                .rt
+                .block_on(self.ipc.get_config_toml())
+                .map_err(|e| format!("daemon did not return the config: {e:#}"));
+            self.apply_loaded_config(resolve_loaded_config(file_exists, text));
             if let Ok(list) = self.rt.block_on(self.ipc.list_countries()) {
                 if !list.is_empty() {
                     self.countries = list;
@@ -797,11 +836,12 @@ impl SdssSettingsApp {
             }
             self.token_stored = self.rt.block_on(self.ipc.has_token()).unwrap_or(false);
             self.reload_subdivs_for_country();
-        } else if paths::config_file().is_file() {
-            if let Ok(c) = sdss_core::config::load_config(&paths::config_file()) {
-                self.config = c;
-            }
+        } else if file_exists {
+            let text = std::fs::read_to_string(paths::config_file()).map_err(|e| e.to_string());
+            self.apply_loaded_config(resolve_loaded_config(file_exists, text));
             self.reload_subdivs_for_country();
+        } else {
+            self.config_error = None;
         }
         self.remember_subdiv();
         let days = schedule_days(&self.config.schedule);
@@ -828,7 +868,31 @@ impl SdssSettingsApp {
         self.save();
     }
 
+    /// Copy the unreadable `config.toml` aside (never overwriting an earlier backup) and
+    /// allow saving the values currently shown.
+    fn backup_config_and_start_over(&mut self) {
+        let src = paths::config_file();
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let dst = src.with_file_name(format!("config.toml.{stamp}.bak"));
+        match std::fs::copy(&src, &dst) {
+            Ok(_) => {
+                self.config_error = None;
+                self.set_status_success(format!(
+                    "Backed up to {} — saving is enabled again",
+                    dst.display()
+                ));
+            }
+            Err(e) => self.set_status_error(format!("Backup failed, nothing changed: {e}")),
+        }
+    }
+
     fn save(&mut self) {
+        if let Some(e) = &self.config_error {
+            self.set_status_error(format!(
+                "Not saved: config.toml could not be read ({e}). Fix the file and reload, or back it up and start over."
+            ));
+            return;
+        }
         if let Err(e) = self.validate_before_save() {
             self.set_status_error(e);
             return;
@@ -906,6 +970,13 @@ impl eframe::App for SdssSettingsApp {
                     ui.label(egui::RichText::new("daemon offline").color(egui::Color32::YELLOW));
                 }
             });
+            if let Some(err) = self.config_error.clone() {
+                match config_error_banner(ui, &err) {
+                    Some(ConfigErrorAction::Reload) => self.reload(),
+                    Some(ConfigErrorAction::BackupAndStartOver) => self.backup_config_and_start_over(),
+                    None => {}
+                }
+            }
             self.show_status_slot(ui);
         });
 
@@ -1214,5 +1285,78 @@ impl SdssSettingsApp {
             changed = true;
         }
         changed
+    }
+}
+
+/// Persistent notice while `config.toml` is unreadable.
+fn config_error_banner(ui: &mut egui::Ui, err: &str) -> Option<ConfigErrorAction> {
+    let mut action = None;
+    ui.group(|ui| {
+        ui.colored_label(
+            ui.visuals().error_fg_color,
+            "config.toml could not be read — changes are not saved.",
+        );
+        ui.label(format!("{}: {err}", paths::config_file().display()));
+        ui.horizontal(|ui| {
+            if ui
+                .button("Reload")
+                .on_hover_text("Read config.toml again after fixing it by hand")
+                .clicked()
+            {
+                action = Some(ConfigErrorAction::Reload);
+            }
+            if ui
+                .button("Back up and start over")
+                .on_hover_text("Copy the file to a timestamped .bak and save the values shown here from now on")
+                .clicked()
+            {
+                action = Some(ConfigErrorAction::BackupAndStartOver);
+            }
+        });
+    });
+    action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_toml() -> String {
+        toml::to_string_pretty(&AppConfig::default()).unwrap()
+    }
+
+    #[test]
+    fn missing_file_keeps_defaults_without_error() {
+        // The daemon reports "# empty config" when the file does not exist (first start).
+        let r = resolve_loaded_config(false, Ok("# empty config\n".into()));
+        assert!(matches!(r, Ok(None)));
+        let r = resolve_loaded_config(false, Err("not found".into()));
+        assert!(matches!(r, Ok(None)));
+    }
+
+    #[test]
+    fn valid_file_is_loaded() {
+        let r = resolve_loaded_config(true, Ok(valid_toml()));
+        assert!(matches!(r, Ok(Some(_))));
+    }
+
+    #[test]
+    fn broken_toml_blocks_saving() {
+        let r = resolve_loaded_config(true, Ok("schema_version = 1\n[schedule\n".into()));
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn unsupported_schema_version_blocks_saving() {
+        let text = valid_toml().replace("schema_version = 1", "schema_version = 2");
+        assert!(text.contains("schema_version = 2"), "precondition: version replaced");
+        let err = resolve_loaded_config(true, Ok(text)).unwrap_err();
+        assert!(err.contains("schema_version"), "message: {err}");
+    }
+
+    #[test]
+    fn read_error_blocks_saving() {
+        let r = resolve_loaded_config(true, Err("access denied".into()));
+        assert_eq!(r.unwrap_err(), "access denied");
     }
 }

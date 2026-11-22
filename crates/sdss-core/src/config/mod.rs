@@ -17,7 +17,12 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
         return Ok(AppConfig::default());
     }
     let raw = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
-    let mut c: AppConfig = toml::from_str(&raw).with_context(|| "parse config.toml")?;
+    parse_config(&raw)
+}
+
+/// Parse and validate `config.toml` text (same rules as [`load_config`]).
+pub fn parse_config(raw: &str) -> Result<AppConfig> {
+    let mut c: AppConfig = toml::from_str(raw).with_context(|| "parse config.toml")?;
     schedule::normalize_schedule(&mut c.schedule);
     if c.schema_version != CONFIG_SCHEMA_VERSION {
         anyhow::bail!(

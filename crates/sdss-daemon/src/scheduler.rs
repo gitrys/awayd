@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use chrono::{DateTime, Datelike, Local, LocalResult, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Local};
 use sdss_core::status::{LastApplyRecord, StatusSnapshot, STATUS_SCHEMA_VERSION};
 use tokio::sync::mpsc;
 use tokio::sync::{Notify, RwLock, watch};
@@ -13,6 +13,7 @@ use tokio::sync::{Notify, RwLock, watch};
 use crate::apply::apply_presence;
 use crate::apply::ApplyResult;
 use crate::holidays::{load_holiday_nearby_years, HolidaySet};
+use crate::local_time::{resolve_local, trim_to_minute};
 use crate::override_state;
 use crate::runtime_config::build_config;
 use crate::schedule_next::next_schedule_flip_after_default;
@@ -69,23 +70,16 @@ fn next_sleep_after_tick(
     }
 }
 
-fn naive_local_unspec(n: chrono::NaiveDateTime) -> DateTime<Local> {
-    match Local.from_local_datetime(&n) {
-        LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-        LocalResult::None => Local::now(),
-    }
-}
-
 fn next_wake_time(
     now: DateTime<Local>,
     cfg: &crate::work_window::Config,
     hol: &HolidaySet,
     st: &AppState,
 ) -> DateTime<Local> {
-    let now = now.with_second(0).unwrap().with_nanosecond(0).unwrap();
+    let now = trim_to_minute(now);
     let mut candidates: Vec<DateTime<Local>> = Vec::new();
     if let Ok(Some(ov)) = override_state::override_from_state(st) {
-        let exp = naive_local_unspec(ov.expires_at);
+        let exp = resolve_local(&Local, ov.expires_at);
         if exp > now {
             candidates.push(exp);
         }

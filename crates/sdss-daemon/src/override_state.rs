@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, Local, NaiveDateTime, Timelike};
 
 use sdss_core::config::state::{AppState, OverrideRecord};
 use crate::holidays::HolidayLookup;
+use crate::local_time::trim_to_minute;
 use crate::schedule_next::next_schedule_flip_after_default;
 use crate::work_window::{self, Config};
 
@@ -12,10 +13,6 @@ pub const OVERRIDE_JSON_VERSION: u32 = 1;
 
 /// Max manual override when using boundary mode (`ttl_seconds == 0`) or when no flip is found.
 pub const OVERRIDE_BOUNDARY_FALLBACK_SECS: u32 = 8 * 3600;
-
-fn trim_to_minute(dt: DateTime<Local>) -> DateTime<Local> {
-    dt.with_second(0).unwrap().with_nanosecond(0).unwrap()
-}
 
 /// Compute `expires_at` for `SetOverride`.
 ///
@@ -81,7 +78,7 @@ pub fn effective_work_mode(
     de: &dyn HolidayLookup,
     st: &AppState,
 ) -> (bool, &'static str, Option<ManualOverride>) {
-    let now = now.with_second(0).unwrap().with_nanosecond(0).unwrap();
+    let now = trim_to_minute(now);
     let now_naive = now.naive_local();
 
     let ov = match override_from_state(st) {

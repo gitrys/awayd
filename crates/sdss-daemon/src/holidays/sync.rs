@@ -63,12 +63,18 @@ pub fn needs_refresh(path: &Path) -> bool {
 /// Fetch years from Nager and write `paths::holidays_dir()/{CC}.json`.
 /// Uses blocking HTTP so it is safe from the zbus D-Bus executor (no Tokio reactor).
 pub fn ensure_country_sync(country: &str) -> Result<(), String> {
+    sync_country(country, false)
+}
+
+/// Download unless the cache is fresh (or always with `force`). The existing file is only
+/// replaced (atomically) after every year was fetched; on error it stays untouched.
+fn sync_country(country: &str, force: bool) -> Result<(), String> {
     let country = country.trim();
     if country.is_empty() {
         return Err("country code is empty".into());
     }
     let path = cache_path(country);
-    if !needs_refresh(&path) {
+    if !force && !needs_refresh(&path) {
         return Ok(());
     }
     std::fs::create_dir_all(paths::holidays_dir()).map_err(|e| e.to_string())?;
@@ -98,11 +104,16 @@ pub async fn ensure_country(country: &str) -> Result<(), String> {
     ensure_country_sync(country)
 }
 
-/// Force refresh even if cache looks fresh.
+/// Force refresh even if cache looks fresh. On failure the previous file is kept
+/// (it used to be deleted before the download).
 pub fn refresh_country_sync(country: &str) -> Result<(), String> {
-    let path = cache_path(country);
-    let _ = std::fs::remove_file(&path);
-    ensure_country_sync(country)
+    sync_country(country, true).map_err(|e| {
+        if cache_path(country).is_file() {
+            format!("{e} (existing holiday data stays active)")
+        } else {
+            e
+        }
+    })
 }
 
 pub async fn refresh_country(country: &str) -> Result<(), String> {
