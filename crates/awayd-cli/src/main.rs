@@ -63,7 +63,7 @@ enum OverrideCmd {
             short,
             long,
             default_value = "0",
-            help = "TTL: 0 or boundary = next schedule change (max 8h); or seconds / 1h30m / 2h"
+            help = "TTL: 0 or boundary = next schedule change (max 8h; network mode: mode.network_override_ttl_hours); or seconds / 1h30m / 2h"
         )]
         ttl: String,
     },

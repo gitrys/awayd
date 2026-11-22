@@ -14,6 +14,19 @@ pub const OVERRIDE_JSON_VERSION: u32 = 1;
 /// Max manual override when using boundary mode (`ttl_seconds == 0`) or when no flip is found.
 pub const OVERRIDE_BOUNDARY_FALLBACK_SECS: u32 = 8 * 3600;
 
+/// TTL actually used for an override. In network mode schedule changes do not apply, so
+/// "until the next change" (`0`) lasts `network_override_ttl_hours` instead.
+pub fn effective_override_ttl(
+    ttl_seconds: u32,
+    mode: &awayd_core::config::schema::ModeSection,
+) -> u32 {
+    if ttl_seconds == 0 && mode.kind == "network" {
+        (mode.network_override_ttl_hours * 3600.0).round() as u32
+    } else {
+        ttl_seconds
+    }
+}
+
 /// Compute `expires_at` for `SetOverride`.
 ///
 /// - `ttl_seconds > 0`: fixed duration from `now`.
@@ -93,4 +106,30 @@ pub fn effective_work_mode(
         return (work_window::want_work_mode(cfg, now, de), "schedule", None);
     }
     (rec.work_mode, "manual_override", Some(rec))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use awayd_core::config::schema::ModeSection;
+
+    #[test]
+    fn network_mode_uses_its_own_duration_for_until_next_change() {
+        let mut mode = ModeSection::default();
+        assert_eq!(
+            effective_override_ttl(0, &mode),
+            0,
+            "schedule mode: next change"
+        );
+        assert_eq!(effective_override_ttl(1800, &mode), 1800);
+
+        mode.kind = "network".into();
+        mode.network_override_ttl_hours = 2.5;
+        assert_eq!(effective_override_ttl(0, &mode), 9000);
+        assert_eq!(
+            effective_override_ttl(1800, &mode),
+            1800,
+            "explicit TTL wins"
+        );
+    }
 }

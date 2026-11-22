@@ -114,3 +114,12 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   with their own tray; settings of each account talk to their own daemon.
 - **Broken state.json:** stop awayd, write `{` into `state\state.json`, start → log warning
   "state.json unreadable … moved aside", `state.json.<time>.bak` exists, status works.
+
+## 2026-11-22 – Plan N (network mode with ping)
+
+- **Work PC at home:** `[mode] kind = "network"`, `work_host = "<IP of the work PC>"`,
+  `probe = "ping"` → work PC on: status invisible (source `network`) within about a minute;
+  switch it off: online after about two minutes (two missed pings); no change on a single
+  lost ping.
+- **Override in network mode:** tray → override "until next change" → `state.json` expiry is
+  now + `network_override_ttl_hours` (default 8 h).

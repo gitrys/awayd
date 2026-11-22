@@ -61,6 +61,30 @@ pub fn validate_app_config(app: &AppConfig) -> std::result::Result<(), String> {
     schedule::validate_schedule(&sched)?;
     vacation_ranges_from_entries(&app.schedule.vacations)?;
     validate_backend_ids(app)?;
+    validate_mode(&app.mode)?;
+    Ok(())
+}
+
+/// Longest override "until the next change" in network mode.
+const MAX_NETWORK_OVERRIDE_HOURS: f64 = 7.0 * 24.0;
+
+fn validate_mode(mode: &schema::ModeSection) -> std::result::Result<(), String> {
+    if mode.probe_interval_seconds < schema::MIN_PROBE_INTERVAL_SECONDS {
+        return Err(format!(
+            "mode.probe_interval_seconds must be at least {} (is {})",
+            schema::MIN_PROBE_INTERVAL_SECONDS,
+            mode.probe_interval_seconds
+        ));
+    }
+    let ttl = mode.network_override_ttl_hours;
+    if !(ttl > 0.0 && ttl <= MAX_NETWORK_OVERRIDE_HOURS) {
+        return Err(format!(
+            "mode.network_override_ttl_hours must be more than 0 and at most {MAX_NETWORK_OVERRIDE_HOURS} (is {ttl})"
+        ));
+    }
+    if mode.kind == "network" && mode.work_host.trim().is_empty() {
+        return Err("mode.work_host is required for kind = \"network\"".into());
+    }
     Ok(())
 }
 
@@ -260,5 +284,49 @@ mod tests {
         save_state(&path, &AppState::default()).unwrap();
         load_state(&path).unwrap();
         assert!(path.exists());
+    }
+
+    #[test]
+    fn network_mode_settings_are_validated() {
+        let mut c = AppConfig::default();
+        assert_eq!(validate_app_config(&c), Ok(()));
+
+        c.mode.kind = "network".into();
+        let err = validate_app_config(&c).unwrap_err();
+        assert!(err.contains("work_host"), "{err}");
+
+        c.mode.work_host = "192.0.2.10".into();
+        c.mode.probe = schema::ProbeKind::Ping;
+        assert_eq!(validate_app_config(&c), Ok(()));
+
+        c.mode.probe_interval_seconds = 5;
+        assert!(validate_app_config(&c)
+            .unwrap_err()
+            .contains("probe_interval_seconds"));
+        c.mode.probe_interval_seconds = 60;
+
+        for bad in [0.0, -1.0, 200.0, f64::NAN] {
+            c.mode.network_override_ttl_hours = bad;
+            assert!(
+                validate_app_config(&c)
+                    .unwrap_err()
+                    .contains("network_override_ttl_hours"),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn probe_kind_reads_from_toml_and_defaults_to_tcp() {
+        let c = parse_config(CONFIG_0_1_0).unwrap();
+        assert_eq!(c.mode.probe, schema::ProbeKind::Tcp);
+        assert_eq!(c.mode.probe_interval_seconds, 60);
+
+        let raw = format!(
+            "{CONFIG_0_1_0}\n[mode]\nkind = \"network\"\nwork_host = \"192.0.2.10\"\nprobe = \"ping\"\n"
+        );
+        let c = parse_config(&raw).unwrap();
+        assert_eq!(c.mode.probe, schema::ProbeKind::Ping);
+        assert_eq!(validate_app_config(&c), Ok(()));
     }
 }

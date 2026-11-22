@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renumbered when the settings load them.
 - `awayctl override --ttl 1h30` is rejected with a hint (`1h30m`) instead of meaning 1 h 30 s.
 - The country list for the settings is downloaded without blocking other requests for it.
+- Network mode: new `mode.probe = "ping"` (ICMP echo without administrator rights) besides
+  `tcp`, e.g. to detect a work laptop in the home network whose firewall blocks all ports;
+  `work_host` is checked every `mode.probe_interval_seconds` (default 60) instead of only at
+  schedule changes; two failed checks in a row are needed for "absent"; host names are
+  resolved without blocking the daemon; an override "until the next change" lasts
+  `mode.network_override_ttl_hours` (the setting existed but was ignored). The config check
+  requires `work_host` in network mode and plausible values for both settings.
 
 ### Changed
 

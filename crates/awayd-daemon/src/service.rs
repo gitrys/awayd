@@ -229,6 +229,7 @@ impl SchedulerApi for SchedulerService {
         if let Some(w) = hol_warning {
             tracing::warn!(target: "awayd::api", "SetOverride holidays: {w}");
         }
+        let ttl_seconds = override_state::effective_override_ttl(ttl_seconds, &app.mode);
         let exp = override_state::override_expires_at(now, ttl_seconds, &work, &hol);
         let exp_s = exp.format("%Y-%m-%dT%H:%M:%S").to_string();
         let record = awayd_core::config::state::OverrideRecord {

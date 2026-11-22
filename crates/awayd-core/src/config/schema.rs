@@ -163,13 +163,37 @@ pub struct VacationEntry {
 pub struct ModeSection {
     #[serde(default = "default_mode_kind")]
     pub kind: String,
+    /// Network mode: how long an override "until the next change" (`0` / `boundary`) lasts,
+    /// since schedule changes do not apply there.
     #[serde(default = "default_network_ttl")]
     pub network_override_ttl_hours: f64,
-    /// Hostname or IP for `kind = "network"` (reachable → invisible).
+    /// Hostname or IP for `kind = "network"` (present → work / invisible).
     #[serde(default)]
     pub work_host: String,
+    /// TCP port for `probe = "tcp"`.
     #[serde(default = "default_work_port")]
     pub work_port: u16,
+    /// How `work_host` is checked: `tcp` (connect to `work_port`) or `ping` (ICMP echo, e.g.
+    /// a work PC in the home network whose firewall blocks all ports).
+    #[serde(default)]
+    pub probe: ProbeKind,
+    /// Network mode: seconds between two checks of `work_host` (minimum 10).
+    #[serde(default = "default_probe_interval")]
+    pub probe_interval_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProbeKind {
+    #[default]
+    Tcp,
+    Ping,
+}
+
+pub const MIN_PROBE_INTERVAL_SECONDS: u64 = 10;
+
+fn default_probe_interval() -> u64 {
+    60
 }
 
 fn default_work_port() -> u16 {
@@ -223,6 +247,8 @@ impl Default for AppConfig {
                 network_override_ttl_hours: default_network_ttl(),
                 work_host: String::new(),
                 work_port: default_work_port(),
+                probe: ProbeKind::default(),
+                probe_interval_seconds: default_probe_interval(),
             },
             advanced: AdvancedSection {
                 poke_debounce_ms: default_poke_ms(),
@@ -241,6 +267,8 @@ impl Default for ModeSection {
             network_override_ttl_hours: default_network_ttl(),
             work_host: String::new(),
             work_port: default_work_port(),
+            probe: ProbeKind::default(),
+            probe_interval_seconds: default_probe_interval(),
         }
     }
 }

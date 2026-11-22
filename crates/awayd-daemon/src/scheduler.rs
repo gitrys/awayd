@@ -61,6 +61,16 @@ fn bounded_sleep(until_next_change: Duration) -> Duration {
     until_next_change.clamp(Duration::from_secs(1), MAX_TICK_SLEEP)
 }
 
+/// Network mode checks `work_host` at least every `probe_interval_seconds`: its presence can
+/// change at any time, schedule changes do not matter there.
+fn mode_sleep(sleep: Duration, mode: &awayd_core::config::schema::ModeSection) -> Duration {
+    if mode.kind == "network" {
+        sleep.min(Duration::from_secs(mode.probe_interval_seconds.max(1)))
+    } else {
+        sleep
+    }
+}
+
 /// Services switched on in `app`, in table order.
 fn enabled_backends(app: &AppConfig) -> impl Iterator<Item = &'static BackendInfo> + '_ {
     backend_table::ALL
@@ -449,7 +459,7 @@ async fn run_one_tick(
         if let Some(wait) = earliest_wait(applied, &backends, Instant::now()) {
             sleep = sleep.min(wait.max(Duration::from_secs(1)));
         }
-        Ok(sleep)
+        Ok(mode_sleep(sleep, &app.mode))
     }
     .await;
 
@@ -893,5 +903,21 @@ mod tests {
             Duration::from_secs(120)
         );
         assert_eq!(bounded_sleep(Duration::ZERO), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn network_mode_wakes_at_the_probe_interval() {
+        let mut mode = awayd_core::config::schema::ModeSection::default();
+        let long = Duration::from_secs(900);
+        assert_eq!(mode_sleep(long, &mode), long, "schedule mode unchanged");
+
+        mode.kind = "network".into();
+        mode.probe_interval_seconds = 60;
+        assert_eq!(mode_sleep(long, &mode), Duration::from_secs(60));
+        // A sooner wake (schedule, retry) is kept.
+        assert_eq!(
+            mode_sleep(Duration::from_secs(20), &mode),
+            Duration::from_secs(20)
+        );
     }
 }

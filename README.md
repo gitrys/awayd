@@ -73,6 +73,29 @@ owners and are used here only to describe what the program works with.
 
 More details: [docs/install-windows.md](docs/install-windows.md).
 
+## Network mode (optional, config file only)
+
+Instead of work hours, awayd can follow whether a device is present: present → invisible,
+absent → online. Example: your work laptop sits in your home network (connected to the
+company by VPN); while it is switched on, you count as at work.
+
+```toml
+[mode]
+kind = "network"
+work_host = "192.168.1.50"   # give the device a fixed IP in your router
+probe = "ping"               # "tcp" (default) connects to work_port instead
+probe_interval_seconds = 60  # minimum 10
+network_override_ttl_hours = 8  # how long an override "until the next change" lasts
+```
+
+- `ping` needs no administrator rights and works when the device's firewall blocks all ports
+  but answers ping. `tcp` checks one port (`work_port`, default 22).
+- One answer means present; two failed checks in a row mean absent, so switching back to
+  online takes up to about two check intervals.
+- A device counts as present as soon as it is switched on (also at its login screen).
+- The settings window does not offer network mode yet ("coming soon") but keeps it when
+  saving.
+
 ## Programs
 
 | Program | Crate | Purpose |
