@@ -121,6 +121,8 @@ fn redact_patterns() -> &'static Vec<Regex> {
             // Credential keys of any backend (`discord_token=…`, `slack_credential: …`).
             Regex::new(r"(?i)(\b\w+_(?:token|credential|secret)\s*[=:]\s*)(\S+)").unwrap(),
             Regex::new(r"(?i)(token\s*[=:]\s*)([A-Za-z0-9._\-]{20,})").unwrap(),
+            // Raw Discord user token without any key (three base64url parts).
+            Regex::new(r"()([\w-]{24,}\.[\w-]{6}\.[\w-]{27,})").unwrap(),
         ]
     })
 }
@@ -192,6 +194,11 @@ mod tests {
             let r = redact_message(s);
             assert!(r.ends_with("<redacted>"), "{s} -> {r}");
         }
+        // Made-up value in Discord's token format (no key, no "Bearer"), built at runtime so
+        // no token-shaped literal is in the source (secret scanners flag it).
+        let fake = format!("{}.{}.{}", "x".repeat(26), "y".repeat(6), "z".repeat(30));
+        let raw = format!("msg C raw token {fake}");
+        assert_eq!(redact_message(&raw), "msg C raw token <redacted>");
         // Plain words are kept: status texts mention "token" without a value.
         assert_eq!(
             redact_message("Discord token missing"),

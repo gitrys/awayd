@@ -60,8 +60,10 @@ impl SchedulerApi for SchedulerService {
         holidays::catalogue::subdivisions_for_country(country)
     }
 
-    fn list_available_countries(&self) -> Vec<(String, String)> {
-        holidays::sync::list_available_countries_cached_sync().unwrap_or_default()
+    async fn list_available_countries(&self) -> Vec<(String, String)> {
+        holidays::sync::list_available_countries_cached()
+            .await
+            .unwrap_or_default()
     }
 
     async fn holiday_data_status(&self, country: &str) -> (bool, i32, i32, String, String) {
@@ -69,9 +71,9 @@ impl SchedulerApi for SchedulerService {
         (s.ready, s.year_min, s.year_max, s.fetched_at, s.message)
     }
 
-    fn refresh_holiday_data(&self, country: &str) -> String {
+    async fn refresh_holiday_data(&self, country: &str) -> String {
         let cc = country.trim().to_uppercase();
-        match holidays::sync::refresh_country_sync(&cc) {
+        match holidays::sync::refresh_country(&cc).await {
             Ok(()) => format!("ok: refreshed holiday data for {cc}"),
             Err(e) => format!("error: {e}"),
         }
@@ -138,10 +140,14 @@ impl SchedulerApi for SchedulerService {
 
     async fn reload_config(&self) -> bool {
         let path = paths::config_file();
-        if let Err(e) = awayd_core::config::load_config(&path) {
-            tracing::warn!(target: "awayd::api", "ReloadConfig parse: {e}");
-            return false;
-        }
+        let app = match awayd_core::config::load_config(&path) {
+            Ok(app) => app,
+            Err(e) => {
+                tracing::warn!(target: "awayd::api", "ReloadConfig parse: {e}");
+                return false;
+            }
+        };
+        awayd_core::logging::apply_capture_level(&app.advanced);
         let raw = match std::fs::read_to_string(&path) {
             Ok(r) => r,
             Err(e) => {

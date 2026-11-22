@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `awayctl doctor --json` prints one valid JSON object (paths, daemon status, local config).
   `awayctl doctor` exits with 1 when the daemon is not running or reports problems, and
   `awayctl override set/clear` exit with 1 when the daemon rejects the request.
+- An empty or unknown region (`schedule.subdiv`) no longer means "no public holidays at all":
+  the nationwide holidays apply and the status shows a warning naming the region.
+- Holiday downloads (background sync, "Refresh holiday data", country list) no longer block
+  the daemon's async worker threads (debug builds panicked, so the background sync stopped).
+- Logs: structured fields are redacted like the message (and values of `*_token` / `*_secret`
+  fields are dropped), raw Discord tokens are redacted, timestamps carry the UTC offset
+  (`…T17:59:21.311+01:00`), and a changed `advanced.log_min_level` takes effect on save /
+  reload without restarting the daemon.
 
 ### Changed
 

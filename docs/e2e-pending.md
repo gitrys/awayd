@@ -88,3 +88,14 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   field ("Press Enter or leave the field to save"), then one "Discord token saved".
 - **CLI:** `awayctl doctor --json | ConvertFrom-Json` works; `$LASTEXITCODE` is 1 while the
   status reports `ok: no` and 0 when ok; `awayctl override set foo` → exit code 1.
+
+## 2026-11-22 – Fix plan C2 (legacy issues 35, 9, 65)
+
+- **Region fallback:** set `subdiv = "BWX"` in `config.toml` → status warning "region "BWX" not
+  found … only nationwide public holidays apply"; 25 Dec still counts as a holiday (doctor
+  next_wake / tray). Same with `subdiv = ""` ("no region set for DE").
+- **Holiday downloads:** Settings → "Refresh holiday data" and the country list still work;
+  while a refresh runs, the tray and `awayctl doctor` stay responsive.
+- **Logs:** new lines have `ts` with offset (`+01:00`); the settings log view still shows only
+  the time. Set `[advanced] log_min_level = "warn"` and save in the settings (or Reload) → log
+  line "log capture level applied", no more INFO lines afterwards; back to "debug".

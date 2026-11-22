@@ -61,7 +61,7 @@ pub fn needs_refresh(path: &Path) -> bool {
 }
 
 /// Fetch years from Nager and write `paths::holidays_dir()/{CC}.json`.
-/// Uses blocking HTTP, so it can be called from threads without a Tokio runtime.
+/// Blocking HTTP: call it from a plain thread, or use [`ensure_country`] in async code.
 pub fn ensure_country_sync(country: &str) -> Result<(), String> {
     sync_country(country, false)
 }
@@ -100,8 +100,23 @@ fn sync_country(country: &str, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Run blocking holiday work (HTTP via `reqwest::blocking`, file I/O) on Tokio's blocking pool.
+/// Calling the `*_sync` functions directly on a Tokio worker blocks it for up to minutes and
+/// panics in debug builds (reqwest drops its internal runtime inside an async context).
+async fn off_runtime<T, F>(f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("holiday task failed: {e}"))?
+}
+
+/// [`ensure_country_sync`] for async callers (background task).
 pub async fn ensure_country(country: &str) -> Result<(), String> {
-    ensure_country_sync(country)
+    let country = country.to_string();
+    off_runtime(move || ensure_country_sync(&country)).await
 }
 
 /// Force refresh even if cache looks fresh. On failure the previous file is kept
@@ -116,8 +131,10 @@ pub fn refresh_country_sync(country: &str) -> Result<(), String> {
     })
 }
 
+/// [`refresh_country_sync`] for async callers (IPC).
 pub async fn refresh_country(country: &str) -> Result<(), String> {
-    refresh_country_sync(country)
+    let country = country.to_string();
+    off_runtime(move || refresh_country_sync(&country)).await
 }
 
 fn write_holiday_file(path: &Path, file: &HolidayFile) -> Result<(), String> {
@@ -141,8 +158,9 @@ pub fn list_available_countries_cached_sync() -> Result<Vec<(String, String)>, S
     Ok(list)
 }
 
+/// [`list_available_countries_cached_sync`] for async callers (IPC).
 pub async fn list_available_countries_cached() -> Result<Vec<(String, String)>, String> {
-    list_available_countries_cached_sync()
+    off_runtime(list_available_countries_cached_sync).await
 }
 
 /// Scan `{data folder}/holidays/*.json`.
@@ -278,7 +296,7 @@ pub async fn background_task(poke: std::sync::Arc<crate::watchers::PokeGate>) {
             .map(|c| c.schedule.country)
             .unwrap_or_else(|_| "DE".to_string());
         let had_fresh_data = !needs_refresh(&cache_path(&country));
-        match ensure_country_sync(&country) {
+        match ensure_country(&country).await {
             Ok(()) => {
                 failures = 0;
                 if !had_fresh_data {

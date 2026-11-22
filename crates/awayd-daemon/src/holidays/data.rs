@@ -192,31 +192,91 @@ fn load_holiday_set_uncached(country: &str, subdiv: &str, year: i32) -> Result<H
             dates: HashSet::new(),
         });
     };
-    let Some(sub) = subdiv_entry_for(yr, subdiv) else {
-        return Ok(HolidaySet {
-            dates: HashSet::new(),
-        });
-    };
     let mut dates = HashSet::new();
-    if let Some(list) = sub.by_category.get(HOLIDAY_CATEGORY) {
-        for rec in list {
-            let nd =
-                NaiveDate::parse_from_str(rec.date_str(), "%Y-%m-%d").map_err(|e| e.to_string())?;
-            dates.insert(nd);
-        }
+    for rec in records_for(yr, subdiv) {
+        let nd =
+            NaiveDate::parse_from_str(rec.date_str(), "%Y-%m-%d").map_err(|e| e.to_string())?;
+        dates.insert(nd);
     }
     Ok(HolidaySet { dates })
 }
 
+fn subdiv_key(subdiv: &str) -> String {
+    subdiv.trim().to_uppercase()
+}
+
 fn subdiv_entry_for<'a>(yr: &'a YearEntry, subdiv: &str) -> Option<&'a SubdivEntry> {
-    let subdiv_key = if subdiv.is_empty() {
-        "".to_string()
-    } else {
-        subdiv.to_uppercase()
-    };
     yr.by_subdiv
-        .get(&subdiv_key)
+        .get(&subdiv_key(subdiv))
         .or_else(|| yr.by_subdiv.get(subdiv))
+}
+
+/// Public holidays of `subdiv` in one year. An empty or unknown region (typo, region that has
+/// no regional holiday in this year) falls back to the holidays every region of the year shares,
+/// i.e. the nationwide ones; before, it yielded no holiday at all, not even Christmas.
+fn records_for<'a>(yr: &'a YearEntry, subdiv: &str) -> Vec<&'a HolidayRecord> {
+    match subdiv_entry_for(yr, subdiv) {
+        Some(sub) => sub
+            .by_category
+            .get(HOLIDAY_CATEGORY)
+            .map(|list| list.iter().collect())
+            .unwrap_or_default(),
+        None => nationwide_records(yr),
+    }
+}
+
+/// Holidays present in every region of the year (works with existing cache files, which have
+/// no separate "" entry for countries with regions).
+fn nationwide_records(yr: &YearEntry) -> Vec<&HolidayRecord> {
+    let lists: Vec<&[HolidayRecord]> = yr
+        .by_subdiv
+        .values()
+        .map(|s| {
+            s.by_category
+                .get(HOLIDAY_CATEGORY)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        })
+        .collect();
+    let Some((first, rest)) = lists.split_first() else {
+        return Vec::new();
+    };
+    let rest: Vec<HashSet<&str>> = rest
+        .iter()
+        .map(|l| l.iter().map(HolidayRecord::date_str).collect())
+        .collect();
+    first
+        .iter()
+        .filter(|r| rest.iter().all(|dates| dates.contains(r.date_str())))
+        .collect()
+}
+
+/// Status warning when `subdiv` is not a region of the holiday file (in any year).
+fn region_warning_for(file: &HolidayFile, country: &str, subdiv: &str) -> Option<String> {
+    let key = subdiv_key(subdiv);
+    let known = file
+        .by_year
+        .values()
+        .any(|yr| yr.by_subdiv.contains_key(&key) || yr.by_subdiv.contains_key(subdiv));
+    if known {
+        return None;
+    }
+    let country = country.trim().to_uppercase();
+    Some(if key.is_empty() {
+        format!(
+            "no region set for {country} (schedule.subdiv); only nationwide public holidays apply"
+        )
+    } else {
+        format!(
+            "region {subdiv:?} not found in the holiday data for {country}; only nationwide public holidays apply"
+        )
+    })
+}
+
+fn region_warning(country: &str, subdiv: &str) -> Option<String> {
+    let (raw, _) = resolve_country_bytes(country)?;
+    let file = parse_holiday_file(&raw).ok()?;
+    region_warning_for(&file, country, subdiv)
 }
 
 /// List public holidays for `(country, subdiv, year)`, sorted by date.
@@ -233,14 +293,10 @@ pub fn list_holidays_for_subdiv(
     let Some(yr) = file.by_year.get(&year_s) else {
         return Ok(Vec::new());
     };
-    let Some(sub) = subdiv_entry_for(yr, subdiv) else {
-        return Ok(Vec::new());
-    };
-    let mut out: Vec<HolidayListEntry> = sub
-        .by_category
-        .get(HOLIDAY_CATEGORY)
-        .map(|list| list.iter().map(HolidayRecord::to_list_entry).collect())
-        .unwrap_or_default();
+    let mut out: Vec<HolidayListEntry> = records_for(yr, subdiv)
+        .into_iter()
+        .map(HolidayRecord::to_list_entry)
+        .collect();
     out.sort_by(|a, b| a.date.cmp(&b.date));
     Ok(out)
 }
@@ -362,7 +418,8 @@ pub fn load_holidays_or_empty(
     match load_holiday_nearby_years(country, subdiv, year) {
         // Data present, but a missing year would silently yield no holidays: report it.
         Ok(set) => {
-            let warnings = holiday_coverage_warnings(country, year);
+            let mut warnings = holiday_coverage_warnings(country, year);
+            warnings.extend(region_warning(country, subdiv));
             (set, (!warnings.is_empty()).then(|| warnings.join("; ")))
         }
         Err(e) => (
@@ -371,5 +428,97 @@ pub fn load_holidays_or_empty(
                 "{e}; public holidays are ignored until holiday data is available"
             )),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn region(dates: &[&str]) -> SubdivEntry {
+        SubdivEntry {
+            by_category: HashMap::from([(
+                HOLIDAY_CATEGORY.to_string(),
+                dates
+                    .iter()
+                    .map(|d| HolidayRecord::DateOnly(d.to_string()))
+                    .collect(),
+            )]),
+        }
+    }
+
+    /// Like the DE cache: regions only, no "" entry.
+    fn de_year() -> YearEntry {
+        YearEntry {
+            by_subdiv: HashMap::from([
+                (
+                    "BW".to_string(),
+                    region(&["2026-01-01", "2026-01-06", "2026-12-25"]),
+                ),
+                (
+                    "BY".to_string(),
+                    region(&["2026-01-01", "2026-08-15", "2026-12-25"]),
+                ),
+            ]),
+        }
+    }
+
+    fn dates(records: Vec<&HolidayRecord>) -> Vec<&str> {
+        let mut d: Vec<&str> = records.into_iter().map(HolidayRecord::date_str).collect();
+        d.sort_unstable();
+        d
+    }
+
+    #[test]
+    fn known_region_keeps_its_own_holidays() {
+        let yr = de_year();
+        assert_eq!(
+            dates(records_for(&yr, "BW")),
+            ["2026-01-01", "2026-01-06", "2026-12-25"]
+        );
+        assert_eq!(dates(records_for(&yr, "bw")), dates(records_for(&yr, "BW")));
+    }
+
+    #[test]
+    fn empty_or_unknown_region_falls_back_to_nationwide() {
+        let yr = de_year();
+        for subdiv in ["", "BWX"] {
+            assert_eq!(
+                dates(records_for(&yr, subdiv)),
+                ["2026-01-01", "2026-12-25"],
+                "{subdiv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn country_without_regions_uses_its_single_entry() {
+        let yr = YearEntry {
+            by_subdiv: HashMap::from([(String::new(), region(&["2026-10-26"]))]),
+        };
+        assert_eq!(dates(records_for(&yr, "")), ["2026-10-26"]);
+        assert_eq!(dates(records_for(&yr, "W")), ["2026-10-26"]);
+    }
+
+    #[test]
+    fn region_warning_only_for_regions_missing_in_all_years() {
+        let file = HolidayFile {
+            schema_version: 3,
+            country: "DE".into(),
+            source: None,
+            fetched_at: None,
+            year_min: Some(2026),
+            year_max: Some(2026),
+            by_year: HashMap::from([("2026".to_string(), de_year())]),
+        };
+        assert_eq!(region_warning_for(&file, "DE", "BW"), None);
+        assert_eq!(region_warning_for(&file, "de", "by"), None);
+        let typo = region_warning_for(&file, "DE", "BWX").unwrap();
+        assert!(
+            typo.contains("\"BWX\"") && typo.contains("nationwide"),
+            "{typo}"
+        );
+        let empty = region_warning_for(&file, "DE", "").unwrap();
+        assert!(empty.contains("no region set for DE"), "{empty}");
     }
 }

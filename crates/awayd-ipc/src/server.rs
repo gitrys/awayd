@@ -19,9 +19,11 @@ pub trait SchedulerApi: Send + Sync {
     /// A credential is stored for backend `id`.
     async fn has_credential(&self, id: &str) -> bool;
     async fn list_subdivisions(&self, country: &str) -> Vec<String>;
-    fn list_available_countries(&self) -> Vec<(String, String)>;
+    /// May download from the internet: implementations must not block the async caller.
+    async fn list_available_countries(&self) -> Vec<(String, String)>;
     async fn holiday_data_status(&self, country: &str) -> (bool, i32, i32, String, String);
-    fn refresh_holiday_data(&self, country: &str) -> String;
+    /// Downloads from the internet: implementations must not block the async caller.
+    async fn refresh_holiday_data(&self, country: &str) -> String;
     async fn list_holidays(&self, country: &str, subdiv: &str, year: i32) -> Value;
     async fn set_config_toml(&self, toml: &str) -> bool;
     async fn reload_config(&self) -> bool;
@@ -113,7 +115,7 @@ async fn dispatch(api: &Arc<dyn SchedulerApi>, req: &JsonRpcRequest) -> JsonRpcR
                 .unwrap_or("");
             Ok(json!(api.list_subdivisions(country).await))
         }
-        "list_available_countries" => Ok(json!(api.list_available_countries())),
+        "list_available_countries" => Ok(json!(api.list_available_countries().await)),
         "holiday_data_status" => {
             let country = req
                 .params
@@ -129,7 +131,7 @@ async fn dispatch(api: &Arc<dyn SchedulerApi>, req: &JsonRpcRequest) -> JsonRpcR
                 .get("country")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            Ok(json!(api.refresh_holiday_data(country)))
+            Ok(json!(api.refresh_holiday_data(country).await))
         }
         "list_holidays" => {
             let country = req

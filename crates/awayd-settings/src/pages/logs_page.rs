@@ -52,7 +52,9 @@ fn level_color(level: &str, visuals: &egui::Visuals) -> egui::Color32 {
 }
 
 fn format_row(entry: &LogEntry) -> String {
-    let ts_short = entry.ts.split('T').nth(1).unwrap_or(&entry.ts);
+    // "HH:MM:SS.mmm" from "2026-11-22T17:59:21.311+01:00" (older lines have no offset).
+    let time = entry.ts.split('T').nth(1).unwrap_or(&entry.ts);
+    let ts_short = time.get(..12).unwrap_or(time);
     let mut fields = String::new();
     for (k, v) in &entry.fields {
         if !fields.is_empty() {
