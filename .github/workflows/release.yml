@@ -1,0 +1,69 @@
+name: release
+
+# Tag vX.Y.Z  -> tests, portable ZIP + SHA256SUMS.txt, GitHub release as DRAFT.
+#                The maintainer signs the ZIP locally (packaging/windows/sign-release.ps1)
+#                and publishes the draft afterwards.
+# Manual run  -> dry run: same build, bundle only uploaded as a workflow artifact.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check tag matches Cargo.toml version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages |
+            Where-Object name -eq 'awayd-daemon' | Select-Object -First 1 -ExpandProperty version
+          if ("v$v" -ne "${{ github.ref_name }}") {
+            throw "tag ${{ github.ref_name }} does not match Cargo.toml version $v"
+          }
+
+      - name: Test
+        # Serial: several integration tests set the process-wide APPDATA.
+        run: cargo test --workspace --locked -- --test-threads=1
+
+      - name: Install cargo-about
+        run: cargo install cargo-about --version 0.9.3 --locked --features cli
+
+      - name: Build release bundle
+        shell: pwsh
+        run: .\packaging\windows\build-portable.ps1 -Release
+
+      - name: Upload bundle (workflow artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: awayd-release-bundle
+          path: |
+            dist/release/*.zip
+            dist/release/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Create draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $v = $tag.TrimStart('v')
+          $lines = Get-Content CHANGELOG.md
+          $hit = $lines | Select-String -Pattern "^## \[$([regex]::Escape($v))\]" | Select-Object -First 1
+          if (-not $hit) { throw "CHANGELOG.md has no section '## [$v]'" }
+          $rest = @($lines[$hit.LineNumber..($lines.Count - 1)])
+          $next = $rest | Select-String -Pattern '^## \[' | Select-Object -First 1
+          $notes = if ($next) { $rest[0..($next.LineNumber - 2)] } else { $rest }
+          ($notes -join "`n").Trim() | Set-Content -Encoding utf8 release-notes.md
+          $zip = Get-ChildItem dist/release/*.zip | Select-Object -First 1
+          gh release create $tag --draft --verify-tag --title "awayd $tag" --notes-file release-notes.md $zip.FullName dist/release/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }

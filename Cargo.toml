@@ -21,6 +21,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "registry"] }
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "sync", "time", "io-util", "net"] }
 winreg = "0.52"
+winresource = "0.1"
 
 [profile.release]
 opt-level = "z"

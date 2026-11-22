@@ -22,3 +22,6 @@ portable.marker
 # Local agent instructions (kept out of the public repository)
 AGENTS.md
 CLAUDE.md
+
+# minisign secret keys (only the public key minisign.pub belongs in the repository)
+*.key

@@ -33,9 +33,15 @@ owners and are used here only to describe what the program works with.
 
 ## Install (portable)
 
-1. Build the portable folder (see [Build](#build)) or take it from a release, and copy it anywhere,
-   for example `C:\Tools\awayd-portable\`.
+1. Download `awayd-vX.Y.Z-windows-x64-portable.zip` from the
+   [releases](https://github.com/gitrys/awayd/releases) (optionally [verify it](#verify-downloads))
+   or build it yourself (see [Build](#build)), and extract it anywhere, for example
+   `C:\Tools\awayd\`.
 2. Start `awayd.exe`. A tray icon appears.
+
+   The executables are not code-signed yet, so Windows SmartScreen may show "Windows protected
+   your PC" on the first start. Choose **More info → Run anyway** if you trust the download
+   (verified checksum/signature).
 3. Open **Settings** from the tray menu (or run `awayd-settings.exe`) and complete the wizard:
    country/region, work hours and, optionally, the Discord token (see the warning above).
 4. Start awayd automatically at login: tick **Settings → Scheduler → Start awayd at login**, or
@@ -83,15 +89,38 @@ Logs can be viewed in **Settings → Logs** or with:
 .\awayctl.exe doctor --pretty
 ```
 
+## Verify downloads
+
+Every release contains `SHA256SUMS.txt` and a [minisign](https://jedisct1.github.io/minisign/)
+signature (`*.zip.minisig`) made with the key in [`minisign.pub`](minisign.pub).
+
+```powershell
+# Checksum: must match the line in SHA256SUMS.txt
+(Get-FileHash -Algorithm SHA256 .\awayd-vX.Y.Z-windows-x64-portable.zip).Hash.ToLower()
+
+# Signature (minisign, or `rsign verify` from `cargo install rsign2`)
+minisign -Vm awayd-vX.Y.Z-windows-x64-portable.zip -p minisign.pub
+```
+
 ## Build
 
-Requires Rust 1.88 or newer (MSVC toolchain).
+Requires Rust 1.88 or newer (MSVC toolchain, Windows SDK for the icon/version resources).
 
 ```powershell
 cargo build --release                       # target\release\{awayd,awayd-settings,awayctl}.exe
 .\packaging\windows\build-portable.ps1      # dist\awayd-portable\
 cargo test --workspace -- --test-threads=1  # tests run serially (they share process env vars)
 ```
+
+### Releasing (maintainers)
+
+1. Update the version in `Cargo.toml` and add a `## [X.Y.Z]` section to `CHANGELOG.md`.
+2. Push the tag `vX.Y.Z`. The `release` workflow runs the tests, builds the portable ZIP with
+   third-party licenses (`cargo about`, see `about.toml`) and `SHA256SUMS.txt`, and creates a
+   **draft** release. A manual run of the workflow is a dry run (bundle as workflow artifact only).
+3. Sign locally: `.\packaging\windows\sign-release.ps1 -Tag vX.Y.Z` (verifies the checksum, signs
+   with the minisign secret key, uploads the `.minisig`).
+4. Review the draft and publish it.
 
 ## Credits
 

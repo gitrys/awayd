@@ -38,4 +38,26 @@ fn main() {
         entries.join(",\n")
     );
     fs::write(out_dir.join("embedded_holidays.rs"), rs).expect("write embedded_holidays.rs");
+
+    embed_windows_resources();
+}
+
+/// Icon and version information shown in Explorer / Task Manager for `awayd.exe`.
+fn embed_windows_resources() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let icon = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/icons/awayd.ico");
+    println!("cargo:rerun-if-changed={icon}");
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(icon)
+        .set("ProductName", "awayd")
+        .set("FileDescription", "awayd status scheduler")
+        .set("OriginalFilename", "awayd.exe")
+        .set(
+            "LegalCopyright",
+            "Copyright (C) 2026 awayd contributors. GPL-3.0-or-later.",
+        );
+    res.compile()
+        .expect("embed Windows resources (icon, version info)");
 }
