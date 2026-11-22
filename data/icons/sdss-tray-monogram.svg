@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64" role="img" aria-label="SDSS">
+  <title>SDSS</title>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#2a2a2e"/>
+  <g fill="none" stroke="#a0a0a8" stroke-width="2.5" stroke-linecap="round">
+    <path d="M 38 14 A 11 11 0 0 1 54 22"/>
+    <line x1="46" y1="18" x2="50" y2="12"/>
+    <line x1="46" y1="18" x2="54" y2="18"/>
+  </g>
+  <circle cx="32" cy="34" r="14" fill="#50b464"/>
+  <g id="override-ring" opacity="0">
+    <circle cx="32" cy="34" r="18" fill="none" stroke="#468cdc" stroke-width="3"/>
+  </g>
+</svg>

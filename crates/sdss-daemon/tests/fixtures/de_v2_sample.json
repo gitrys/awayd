@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "country": "DE",
+  "source": "nager.date",
+  "fetched_at": "2026-05-16T12:00:00Z",
+  "year_min": 2026,
+  "year_max": 2026,
+  "by_year": {
+    "2026": {
+      "by_subdiv": {
+        "BY": {
+          "by_category": {
+            "public": ["2026-01-01", "2026-10-03"]
+          }
+        }
+      }
+    }
+  }
+}

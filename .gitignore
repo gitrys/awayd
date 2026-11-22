@@ -1,0 +1,20 @@
+# Build output
+/target
+/dist/
+
+# Runtime data of a portable bundle (config with personal schedule, state, logs, token fallback)
+state/
+*.log
+*.secret
+portable.marker
+
+# Local secrets / env
+.env
+.env.*
+!.env.example
+
+# Editor / tooling
+.cursor/
+.vscode/
+.idea/
+*.code-workspace

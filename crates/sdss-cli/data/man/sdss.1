@@ -1,0 +1,79 @@
+.TH SDSS 1
+.SH NAME
+sdss \- Steam / Discord status scheduler
+.SH SYNOPSIS
+.B sdss
+.RI [ COMMAND ]
+.SH DESCRIPTION
+.B sdss
+runs a user-session daemon that applies Discord and Steam presence from a work schedule,
+with D-Bus controls and optional GTK settings and tray icon.
+.SH COMMANDS
+.TP
+.BR sdss " / " sdss run
+Start the scheduler. With no GUI features, use
+.BR "sdss run --headless" .
+.TP
+.B sdss doctor
+Print live status from the running daemon, or a local config summary.
+.RB [ \-\-json ]
+.TP
+.B sdss migrate
+Import legacy Python configuration into TOML and keyring.
+.RB [ \-\-dry-run ]
+.TP
+.B sdss validate
+Parse and validate
+.IR ~/.config/sdss/config.toml .
+.TP
+.B sdss holidays list
+List cached holiday bundles (year range and source).
+.TP
+.BI "sdss holidays refresh" " [ CC ]"
+Download or refresh holiday data from Nager.Date (default: config country).
+.TP
+.BI "sdss override set" " MODE " "[ \-\-ttl SECONDS ]"
+Request a temporary presence override via D-Bus (\fBinvisible\fR or \fBonline\fR).
+Default TTL is 0 (until the next schedule change, at most 8 hours). Use an explicit duration for a fixed TTL.
+.TP
+.B sdss override clear
+Clear override via D-Bus.
+.SH ENVIRONMENT
+.TP
+.B SDSS_DISCORD_API_URL
+Override the Discord REST base URL (testing / mocking).
+.TP
+.B SDSS_NAGER_API_BASE
+Override the Nager.Date API base URL (default
+.BR https://date.nager.at ).
+.TP
+.B SDSS_REGENERATE_HOLIDAYS
+If set to
+.B 1
+or
+.BR true ,
+the build script may run
+.I tools/export-holidays/export.py
+for dev-only JSON fixtures (not used at runtime).
+.TP
+.B RUST_LOG
+Tracing filter for stderr (default when not logging to the journal).
+.TP
+.B JOURNAL_STREAM / INVOCATION_ID
+When built with the
+.B journald
+feature, these systemd variables select journald logging instead of plain stderr format.
+.SH FILES
+.TP
+.I ~/.config/sdss/config.toml
+Main configuration.
+.TP
+.I ~/.local/state/sdss/state.json
+Override and apply bookkeeping.
+.TP
+.I ~/.local/state/sdss/discord_token.secret
+Optional token file fallback if the keyring cannot be used.
+.SH SEE ALSO
+User unit:
+.I /usr/lib/systemd/user/sdss.service
+(if installed).
