@@ -5,16 +5,30 @@ on:
   pull_request:
 
 jobs:
-  build:
+  test:
+    name: fmt, build, test (stable)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.74"
+          components: rustfmt
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo build release
-        run: cargo build --release
+        run: cargo build --release --locked
       - name: cargo test
-        run: cargo test
+        # Serial: several integration tests set the process-wide APPDATA.
+        run: cargo test --workspace --locked -- --test-threads=1
+
+  msrv:
+    name: check (MSRV 1.88)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Keep in sync with `rust-version` in Cargo.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - name: cargo check
+        run: cargo check --workspace --all-targets --locked
