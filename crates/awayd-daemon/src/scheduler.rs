@@ -247,6 +247,7 @@ async fn run_one_tick(
             next_wake,
             last_apply: state.last_apply.clone(),
             errors: errors.clone(),
+            version: awayd_core::VERSION.into(),
         };
         let json = serde_json::to_string(&body).unwrap_or_else(|_| "{\"ok\":false}".into());
         update_status_cache(
@@ -290,6 +291,7 @@ async fn run_one_tick(
                 next_wake: None,
                 last_apply: None,
                 errors: vec![format!("{e:#}")],
+                version: awayd_core::VERSION.into(),
             };
             if let Ok(j) = serde_json::to_string(&body) {
                 update_status_cache(

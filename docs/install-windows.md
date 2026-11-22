@@ -62,6 +62,3 @@ portable folder) or uses the old unquoted format, and offers to fix it.
 
 Failure toasts are **suppressed** when Windows reports fullscreen D3D, presentation mode, busy, or quiet time (`SHQueryUserNotificationState`). Borderless games may still show toasts — add a Focus Assist rule in Windows Settings if needed.
 
-## Linux
-
-An earlier Linux port exists but is not part of this repository yet.

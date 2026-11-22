@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use awayd_core::autostart::{self, AutostartState};
 use awayd_core::config::paths;
 use awayd_core::config::schema::{AppConfig, VacationEntry};
+use awayd_core::StatusSnapshot;
 use chrono::{Datelike, NaiveDate};
 use eframe::egui;
 
@@ -118,6 +119,8 @@ pub struct AwaydSettingsApp {
     config_error: Option<String>,
     /// Login autostart entry as last read from the registry (`Err` = could not be read).
     autostart_state: Result<AutostartState, String>,
+    /// Version reported by the running daemon (see `refresh_daemon_version`).
+    daemon_version: Option<String>,
 }
 
 /// Decide which config the UI may edit.
@@ -136,6 +139,27 @@ fn resolve_loaded_config(
     awayd_core::config::parse_config(&raw)
         .map(Some)
         .map_err(|e| format!("{e:#}"))
+}
+
+/// Header text for the daemon, e.g. "daemon online (v0.1.0)".
+fn daemon_status_label(online: bool, daemon_version: Option<&str>) -> String {
+    match (online, daemon_version) {
+        (false, _) => "daemon offline".to_string(),
+        (true, Some(v)) => format!("daemon online (v{v})"),
+        (true, None) => "daemon online (version unknown)".to_string(),
+    }
+}
+
+/// Hint when the running daemon is a different build than this settings window (e.g. the
+/// files were updated but awayd.exe was not restarted).
+fn version_mismatch_hint(daemon_version: Option<&str>) -> Option<String> {
+    let v = daemon_version?;
+    (v != awayd_core::VERSION).then(|| {
+        format!(
+            "The running awayd.exe is v{v}, this settings window is v{}. Restart awayd (tray → Quit, then start awayd.exe).",
+            awayd_core::VERSION
+        )
+    })
 }
 
 /// The daemon executable next to this settings binary (same lookup as `awayctl`).
@@ -205,6 +229,7 @@ impl AwaydSettingsApp {
             log_popout_open: false,
             config_error: None,
             autostart_state: Ok(AutostartState::Off),
+            daemon_version: None,
         };
         app.reload();
         app
@@ -896,8 +921,24 @@ impl AwaydSettingsApp {
         }
     }
 
+    /// Version of the running daemon from its status JSON (`None` while offline, before its
+    /// first tick or when it is an older build without the field).
+    fn refresh_daemon_version(&mut self) {
+        self.daemon_version = if self.daemon_ok {
+            self.rt
+                .block_on(self.ipc.status())
+                .ok()
+                .and_then(|raw| serde_json::from_str::<StatusSnapshot>(&raw).ok())
+                .map(|s| s.version)
+                .filter(|v| !v.is_empty())
+        } else {
+            None
+        };
+    }
+
     fn reload(&mut self) {
         self.daemon_ok = self.rt.block_on(self.ipc.ping());
+        self.refresh_daemon_version();
         self.refresh_autostart();
         // Always read config.toml from disk: the daemon's copy is only refreshed by a
         // successful tick, so after a manual edit it can still hold the old valid config and
@@ -1036,13 +1077,18 @@ impl eframe::App for AwaydSettingsApp {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("awayd");
+                ui.label(format!("v{}", awayd_core::VERSION));
                 ui.separator();
+                let daemon = daemon_status_label(self.daemon_ok, self.daemon_version.as_deref());
                 if self.daemon_ok {
-                    ui.label(egui::RichText::new("daemon online").color(egui::Color32::GREEN));
+                    ui.label(egui::RichText::new(daemon).color(egui::Color32::GREEN));
                 } else {
-                    ui.label(egui::RichText::new("daemon offline").color(egui::Color32::YELLOW));
+                    ui.label(egui::RichText::new(daemon).color(egui::Color32::YELLOW));
                 }
             });
+            if let Some(hint) = version_mismatch_hint(self.daemon_version.as_deref()) {
+                ui.colored_label(ui.visuals().warn_fg_color, hint);
+            }
             if let Some(err) = self.config_error.clone() {
                 match config_error_banner(ui, &err) {
                     Some(ConfigErrorAction::Reload) => self.reload(),
@@ -1425,6 +1471,30 @@ mod tests {
         );
         let err = resolve_loaded_config(true, Ok(text)).unwrap_err();
         assert!(err.contains("schema_version"), "message: {err}");
+    }
+
+    #[test]
+    fn daemon_label_shows_version() {
+        assert_eq!(daemon_status_label(false, Some("0.1.0")), "daemon offline");
+        assert_eq!(
+            daemon_status_label(true, Some("0.1.0")),
+            "daemon online (v0.1.0)"
+        );
+        assert_eq!(
+            daemon_status_label(true, None),
+            "daemon online (version unknown)"
+        );
+    }
+
+    #[test]
+    fn mismatch_hint_only_for_other_versions() {
+        assert_eq!(version_mismatch_hint(None), None);
+        assert_eq!(version_mismatch_hint(Some(awayd_core::VERSION)), None);
+        let hint = version_mismatch_hint(Some("0.0.1")).expect("different version");
+        assert!(
+            hint.contains("v0.0.1") && hint.contains(awayd_core::VERSION),
+            "{hint}"
+        );
     }
 
     #[test]

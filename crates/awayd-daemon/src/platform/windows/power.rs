@@ -1,5 +1,6 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
-//! Suspend/resume via WM_POWERBROADCAST on a hidden message-only window.
+//! Suspend/resume via WM_POWERBROADCAST on a hidden top-level window (power broadcasts are
+//! not delivered to message-only windows).
 
 use std::sync::mpsc::Sender;
 

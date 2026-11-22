@@ -47,6 +47,12 @@ fn print_pretty_table(s: &StatusSnapshot) {
         "online (off)"
     };
     println!("{}", c("1", "awayd doctor — daemon status"));
+    let daemon_version = if s.version.is_empty() {
+        "unknown (older daemon)"
+    } else {
+        s.version.as_str()
+    };
+    println!("  {:<16} {}", "daemon version:", daemon_version);
     println!(
         "  {:<16} {}",
         "work_mode:",
@@ -83,6 +89,7 @@ fn print_pretty_table(s: &StatusSnapshot) {
 pub async fn doctor(json: bool, pretty: bool) -> Result<()> {
     let cfg_loaded = config::load_config(&paths::config_file());
 
+    println!("  {:<16} {}", "awayctl:", awayd_core::VERSION);
     println!("  {:<16} {}", "portable:", paths::is_portable());
     println!("  {:<16} {}", "config:", paths::config_file().display());
     println!("  {:<16} {}", "state:", paths::state_file().display());

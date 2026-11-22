@@ -50,4 +50,9 @@ impl Ipc {
     pub async fn refresh_holiday_data(&mut self, country: &str) -> Result<String> {
         Ok(self.inner.refresh_holiday_data(country).await?)
     }
+
+    /// Daemon status JSON (`StatusSnapshot`).
+    pub async fn status(&mut self) -> Result<String> {
+        Ok(self.inner.status().await?)
+    }
 }

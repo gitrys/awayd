@@ -1,5 +1,5 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
-//! Credential storage: system keychain (`keyring` → Secret Service / kwallet) + file fallback.
+//! Credential storage: Windows Credential Manager (`keyring`) + plain-text file fallback.
 
 use anyhow::Result;
 use awayd_core::atomic_fs;
@@ -68,7 +68,7 @@ fn token_fallback_path() -> std::path::PathBuf {
 }
 
 /// Run blocking keyring I/O off the async caller when a Tokio runtime exists (scheduler);
-/// otherwise call synchronously (D-Bus/zbus executor threads have no Tokio reactor).
+/// otherwise call synchronously (callers outside a Tokio runtime).
 async fn run_blocking<F, T>(f: F) -> Result<T>
 where
     F: FnOnce() -> Result<T> + Send + 'static,

@@ -10,6 +10,7 @@ use tokio::runtime::Handle;
 
 use crate::service::SchedulerService;
 
+pub const ID_VERSION: &str = "awayd.version";
 pub const ID_STATUS_MODE: &str = "awayd.status.mode";
 pub const ID_STATUS_NEXT: &str = "awayd.status.next";
 pub const ID_STATUS_APPLY: &str = "awayd.status.apply";
@@ -31,6 +32,7 @@ impl TrayMenu {
     pub fn build() -> Self {
         let menu = Menu::new();
 
+        let version = MenuItem::with_id(ID_VERSION, version_line(), false, None);
         let status_mode = MenuItem::with_id(ID_STATUS_MODE, "…", false, None);
         let status_next = MenuItem::with_id(ID_STATUS_NEXT, "…", false, None);
         let status_apply = MenuItem::with_id(ID_STATUS_APPLY, "…", false, None);
@@ -50,6 +52,8 @@ impl TrayMenu {
         let more_sub = Submenu::new("More…", true);
         let _ = more_sub.append(&apply);
 
+        let _ = menu.append(&version);
+        let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&status_mode);
         let _ = menu.append(&status_next);
         let _ = menu.append(&status_apply);
@@ -76,6 +80,11 @@ impl TrayMenu {
         self.status_next.set_text(next);
         self.status_apply.set_text(apply);
     }
+}
+
+/// First (disabled) tray menu line.
+pub fn version_line() -> String {
+    format!("awayd {}", awayd_core::VERSION)
 }
 
 /// Windows truncates tray tooltips at 127 characters.
@@ -245,6 +254,7 @@ mod tests {
                 steam_error: None,
             }),
             errors: vec![],
+            version: String::new(),
         }
     }
 
@@ -266,6 +276,15 @@ mod tests {
         assert!(next.starts_with("Next: in "));
         assert!(next.contains('m'));
         assert!(next.contains("schedule"));
+    }
+
+    #[test]
+    fn version_line_shows_package_version() {
+        assert_eq!(
+            version_line(),
+            format!("awayd {}", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(version_line().starts_with("awayd 0."));
     }
 
     #[test]

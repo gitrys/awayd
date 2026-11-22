@@ -122,6 +122,11 @@ cargo test --workspace -- --test-threads=1  # tests run serially (they share pro
    with the minisign secret key, uploads the `.minisig`).
 4. Review the draft and publish it.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for how the Discord token is stored, what awayd sends over the
+network and how to report vulnerabilities privately.
+
 ## Credits
 
 - Public holiday data: [Nager.Date](https://date.nager.at), downloaded at runtime.

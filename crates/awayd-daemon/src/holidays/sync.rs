@@ -61,7 +61,7 @@ pub fn needs_refresh(path: &Path) -> bool {
 }
 
 /// Fetch years from Nager and write `paths::holidays_dir()/{CC}.json`.
-/// Uses blocking HTTP so it is safe from the zbus D-Bus executor (no Tokio reactor).
+/// Uses blocking HTTP, so it can be called from threads without a Tokio runtime.
 pub fn ensure_country_sync(country: &str) -> Result<(), String> {
     sync_country(country, false)
 }

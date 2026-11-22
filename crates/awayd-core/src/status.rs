@@ -35,6 +35,9 @@ pub struct StatusSnapshot {
     pub last_apply: Option<LastApplyRecord>,
     #[serde(default)]
     pub errors: Vec<String>,
+    /// Version of the daemon that produced this status. Empty when sent by an older daemon.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version: String,
 }
 
 impl Default for StatusSnapshot {
@@ -48,6 +51,35 @@ impl Default for StatusSnapshot {
             next_wake: None,
             last_apply: None,
             errors: vec![],
+            version: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_without_version_still_parses() {
+        // JSON as written by daemons before the `version` field existed.
+        let old = r#"{"ok":true,"schema":1,"work_mode":false,"source":"schedule","mode_kind":"schedule","errors":[]}"#;
+        let s: StatusSnapshot = serde_json::from_str(old).unwrap();
+        assert_eq!(s.version, "");
+    }
+
+    #[test]
+    fn version_roundtrips_and_is_omitted_when_empty() {
+        let s = StatusSnapshot {
+            version: "0.1.0".into(),
+            ..StatusSnapshot::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""version":"0.1.0""#), "{json}");
+        let back: StatusSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.version, "0.1.0");
+
+        let empty = serde_json::to_string(&StatusSnapshot::default()).unwrap();
+        assert!(!empty.contains("version"), "{empty}");
     }
 }

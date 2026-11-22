@@ -42,7 +42,7 @@ fn blocking_http_client() -> &'static BlockingClient {
     })
 }
 
-/// Blocking fetch for D-Bus handlers (zbus executor has no Tokio reactor).
+/// Blocking fetch for callers without a Tokio runtime.
 pub fn fetch_available_countries_blocking() -> Result<Vec<AvailableCountry>, String> {
     let url = format!("{}/api/v3/AvailableCountries", base_url());
     let resp = blocking_http_client()

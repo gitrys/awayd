@@ -13,3 +13,6 @@ pub mod schedule_util;
 pub mod status;
 
 pub use status::{LastApplyRecord, StatusSnapshot};
+
+/// awayd version (workspace `version` in Cargo.toml), shared by all binaries.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
