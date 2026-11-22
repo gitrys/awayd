@@ -10,8 +10,7 @@ use sdss_core::status::{LastApplyRecord, StatusSnapshot, STATUS_SCHEMA_VERSION};
 use tokio::sync::mpsc;
 use tokio::sync::{watch, Notify, RwLock};
 
-use crate::apply::apply_presence;
-use crate::apply::ApplyResult;
+use crate::apply::{apply_presence, ApplyPlan, ApplyResult, BackendOutcome};
 use crate::holidays::{load_holidays_or_empty, HolidaySet};
 use crate::local_time::{resolve_local, trim_to_minute};
 use crate::override_state;
@@ -26,33 +25,77 @@ use sdss_core::config::state::AppState;
 use sdss_core::config::{self};
 
 /// Last successfully applied `online` flag per backend (`online` = personal / not work).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct BackendApplied {
     discord_online: Option<bool>,
     steam_online: Option<bool>,
+    /// Token Discord rejected permanently (fingerprint + error). Discord is not retried
+    /// until the token changes or the daemon restarts.
+    discord_rejected: Option<(u64, String)>,
 }
 
 const APPLY_RETRY_INITIAL: Duration = Duration::from_secs(30);
 const APPLY_RETRY_MAX: Duration = Duration::from_secs(120);
 
-fn needs_apply(
+/// In-memory fingerprint to notice a token change without keeping another copy of it.
+fn token_fingerprint(token: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    token.trim().hash(&mut h);
+    h.finish()
+}
+
+/// Per backend: apply when forced (startup), poked (`immediate`) or not yet in the target
+/// state. Only the stale backend is applied, so a Discord retry no longer re-triggers Steam.
+/// A permanently rejected token blocks Discord even for pokes: the poke source (user, resume,
+/// process watcher) is not known here.
+fn plan_apply(
     force: bool,
     immediate: bool,
     target_online: bool,
     applied: &BackendApplied,
-) -> bool {
-    force
-        || immediate
-        || applied.discord_online != Some(target_online)
-        || applied.steam_online != Some(target_online)
+    token_fp: u64,
+) -> ApplyPlan {
+    let discord_blocked = matches!(&applied.discord_rejected, Some((fp, _)) if *fp == token_fp);
+    ApplyPlan {
+        discord: !discord_blocked
+            && (force || immediate || applied.discord_online != Some(target_online)),
+        steam: force || immediate || applied.steam_online != Some(target_online),
+    }
 }
 
-fn record_apply(applied: &mut BackendApplied, target_online: bool, result: &ApplyResult) {
-    if result.discord_ok {
-        applied.discord_online = Some(target_online);
+fn record_apply(
+    applied: &mut BackendApplied,
+    target_online: bool,
+    result: &ApplyResult,
+    token_fp: u64,
+) {
+    match &result.discord {
+        BackendOutcome::Sent => {
+            applied.discord_online = Some(target_online);
+            applied.discord_rejected = None;
+        }
+        BackendOutcome::Failed {
+            error,
+            permanent: true,
+        } => applied.discord_rejected = Some((token_fp, error.clone())),
+        _ => {}
     }
-    if result.steam_ok {
-        applied.steam_online = Some(target_online);
+    match &result.steam {
+        BackendOutcome::Sent => applied.steam_online = Some(target_online),
+        // Not running: apply again once it runs (process watcher poke or next tick).
+        BackendOutcome::Skipped(_) => applied.steam_online = None,
+        _ => {}
+    }
+}
+
+/// Status message while Discord is blocked for the current token.
+fn discord_blocked_message(applied: &BackendApplied, token_fp: u64) -> Option<String> {
+    match &applied.discord_rejected {
+        Some((fp, error)) if *fp == token_fp => Some(format!(
+            "discord: {error}; not retried automatically until the token is changed"
+        )),
+        _ => None,
     }
 }
 
@@ -159,20 +202,19 @@ async fn run_one_tick(
 
         let immediate = poke_gate.take_immediate();
         let target_online = !work_mode;
-        let should_apply = needs_apply(force, immediate, target_online, applied);
+        let token_fp = token_fingerprint(&token);
+        let plan = plan_apply(force, immediate, target_online, applied, token_fp);
+        let should_apply = plan.any();
 
         let apply_result = if should_apply {
-            apply_presence(&work, work_mode).await
+            apply_presence(&work, work_mode, plan).await
         } else {
-            ApplyResult {
-                discord_ok: true,
-                steam_ok: true,
-                discord_error: None,
-                steam_error: None,
-            }
+            ApplyResult::not_attempted()
         };
         let apply_ok = apply_result.all_ok();
-        let partial_failure = should_apply && !apply_ok;
+        // Retry only errors a retry may fix; skipped backends and rejected tokens are not
+        // retried.
+        let partial_failure = should_apply && apply_result.needs_retry();
 
         if should_apply {
             let record = LastApplyRecord {
@@ -180,14 +222,17 @@ async fn run_one_tick(
                 work_mode,
                 source: source.to_string(),
                 at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                discord_error: apply_result.discord_error.clone(),
-                steam_error: apply_result.steam_error.clone(),
+                discord_error: apply_result.discord.error(),
+                steam_error: apply_result.steam.error(),
             };
             // Re-load and change only `last_apply`: an override set while the apply was
             // running must not be overwritten with the copy loaded at the start of the tick.
             state = update_state(state_path, |st| st.last_apply = Some(record))
                 .context("save state")?;
-            record_apply(applied, target_online, &apply_result);
+            record_apply(applied, target_online, &apply_result, token_fp);
+        }
+        if let Some(msg) = discord_blocked_message(applied, token_fp) {
+            errors.push(msg);
         }
 
         let next = next_wake_time(now, &work, &hol, &state);
@@ -329,43 +374,131 @@ pub async fn run(
 mod tests {
     use super::*;
 
-    #[test]
-    fn needs_apply_when_discord_behind() {
-        let applied = BackendApplied {
-            discord_online: None,
-            steam_online: Some(false),
-        };
-        assert!(needs_apply(false, false, false, &applied));
+    const TOKEN: u64 = 1;
+    const OTHER_TOKEN: u64 = 2;
+
+    fn applied(discord: Option<bool>, steam: Option<bool>) -> BackendApplied {
+        BackendApplied {
+            discord_online: discord,
+            steam_online: steam,
+            discord_rejected: None,
+        }
+    }
+
+    fn result(discord: BackendOutcome, steam: BackendOutcome) -> ApplyResult {
+        ApplyResult { discord, steam }
+    }
+
+    fn failed(permanent: bool) -> BackendOutcome {
+        BackendOutcome::Failed {
+            error: "err".into(),
+            permanent,
+        }
     }
 
     #[test]
-    fn needs_apply_false_when_both_match() {
-        let applied = BackendApplied {
-            discord_online: Some(false),
-            steam_online: Some(false),
-        };
-        assert!(!needs_apply(false, false, false, &applied));
-    }
-
-    #[test]
-    fn record_apply_partial_leaves_failed_backend_stale() {
-        let mut applied = BackendApplied {
-            discord_online: Some(true),
-            steam_online: Some(true),
-        };
-        record_apply(
-            &mut applied,
-            false,
-            &ApplyResult {
-                discord_ok: false,
-                steam_ok: true,
-                discord_error: Some("transport".into()),
-                steam_error: None,
+    fn plan_applies_only_the_stale_backend() {
+        let a = applied(None, Some(false));
+        let plan = plan_apply(false, false, false, &a, TOKEN);
+        assert_eq!(
+            plan,
+            ApplyPlan {
+                discord: true,
+                steam: false
             },
+            "a Discord retry must not re-trigger Steam"
         );
-        assert_eq!(applied.discord_online, Some(true));
-        assert_eq!(applied.steam_online, Some(false));
-        assert!(needs_apply(false, false, false, &applied));
+    }
+
+    #[test]
+    fn plan_is_empty_when_both_match() {
+        let a = applied(Some(false), Some(false));
+        assert!(!plan_apply(false, false, false, &a, TOKEN).any());
+    }
+
+    #[test]
+    fn poke_applies_both() {
+        let a = applied(Some(false), Some(false));
+        let plan = plan_apply(false, true, false, &a, TOKEN);
+        assert!(plan.discord && plan.steam);
+    }
+
+    #[test]
+    fn rejected_token_blocks_discord_until_token_changes() {
+        let mut a = applied(None, Some(false));
+        record_apply(
+            &mut a,
+            false,
+            &result(failed(true), BackendOutcome::NotAttempted),
+            TOKEN,
+        );
+        for (force, immediate) in [(false, false), (false, true), (true, true)] {
+            assert!(
+                !plan_apply(force, immediate, false, &a, TOKEN).discord,
+                "blocked for force={force} immediate={immediate}"
+            );
+        }
+        assert!(discord_blocked_message(&a, TOKEN).is_some());
+
+        assert!(plan_apply(false, false, false, &a, OTHER_TOKEN).discord);
+        assert!(discord_blocked_message(&a, OTHER_TOKEN).is_none());
+
+        record_apply(
+            &mut a,
+            false,
+            &result(BackendOutcome::Sent, BackendOutcome::NotAttempted),
+            OTHER_TOKEN,
+        );
+        assert!(a.discord_rejected.is_none());
+        assert_eq!(a.discord_online, Some(false));
+    }
+
+    #[test]
+    fn transient_failure_leaves_backend_stale_and_retries() {
+        let mut a = applied(Some(true), Some(true));
+        let r = result(failed(false), BackendOutcome::Sent);
+        record_apply(&mut a, false, &r, TOKEN);
+        assert_eq!(a.discord_online, Some(true));
+        assert_eq!(a.steam_online, Some(false));
+        assert!(a.discord_rejected.is_none());
+        assert!(r.needs_retry());
+        assert!(plan_apply(false, false, false, &a, TOKEN).discord);
+    }
+
+    #[test]
+    fn skipped_and_permanent_outcomes_do_not_retry() {
+        let skipped = result(
+            BackendOutcome::Skipped("no discord token configured".into()),
+            BackendOutcome::Skipped("steam is not running".into()),
+        );
+        assert!(!skipped.needs_retry());
+        assert!(skipped.all_ok());
+
+        let rejected = result(failed(true), BackendOutcome::Sent);
+        assert!(!rejected.needs_retry());
+        assert!(!rejected.all_ok());
+    }
+
+    #[test]
+    fn steam_not_running_is_applied_again_later() {
+        let mut a = applied(Some(false), Some(false));
+        record_apply(
+            &mut a,
+            false,
+            &result(
+                BackendOutcome::NotAttempted,
+                BackendOutcome::Skipped("steam is not running".into()),
+            ),
+            TOKEN,
+        );
+        assert_eq!(a.steam_online, None);
+        assert!(plan_apply(false, false, false, &a, TOKEN).steam);
+    }
+
+    #[test]
+    fn token_fingerprint_ignores_surrounding_whitespace() {
+        assert_eq!(token_fingerprint(" abc "), token_fingerprint("abc"));
+        assert_ne!(token_fingerprint("abc"), token_fingerprint("abd"));
     }
 
     #[test]

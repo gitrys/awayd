@@ -1,5 +1,9 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
-//! WMI push event when Discord.exe starts (re-apply presence).
+//! WMI push event when Discord.exe or steam.exe starts (re-apply presence).
+//!
+//! One WMI subscription for both names: event registrations count against a system-wide WMI
+//! quota. Steam is watched because the Steam backend is skipped while Steam is not running
+//! and must be applied once it starts.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,14 +14,20 @@ use wmi::{COMLibrary, WMIConnection};
 
 use crate::watchers::PokeGate;
 
-const PROCESS_NAME: &str = "Discord.exe";
+const PROCESS_NAMES: &[&str] = &["Discord.exe", "steam.exe"];
 
 /// One Discord start spawns several `Discord.exe` processes within seconds; poke once.
+/// A poke re-applies both backends, so one window for all names is enough.
 const COALESCE_WINDOW: Duration = Duration::from_secs(10);
 
-fn wql(process_name: &str) -> String {
+fn wql(process_names: &[&str]) -> String {
+    let names = process_names
+        .iter()
+        .map(|n| format!("TargetInstance.Name = '{n}'"))
+        .collect::<Vec<_>>()
+        .join(" OR ");
     format!(
-        "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process' AND TargetInstance.Name = '{process_name}'"
+        "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process' AND ({names})"
     )
 }
 
@@ -78,7 +88,7 @@ fn watch_loop(poke: Arc<PokeGate>, coalescer: &mut Coalescer) -> Result<(), Stri
     let com = COMLibrary::new().map_err(|e| e.to_string())?;
     let wmi = WMIConnection::new(com).map_err(|e| e.to_string())?;
     let stream = wmi
-        .raw_notification::<NewProcessEvent>(wql(PROCESS_NAME))
+        .raw_notification::<NewProcessEvent>(wql(PROCESS_NAMES))
         .map_err(|e| e.to_string())?;
     for event in stream {
         let event = event.map_err(|e| e.to_string())?;
@@ -88,7 +98,8 @@ fn watch_loop(poke: Arc<PokeGate>, coalescer: &mut Coalescer) -> Result<(), Stri
                 target: "sdss::discord_watch",
                 pid = p.process_id,
                 name = %p.name,
-                "Discord.exe started"
+                "{} started",
+                p.name
             );
             // `poke_immediate` (not `poke_debounced`): only the immediate flag makes the
             // tick re-apply when the last applied state already matches the target, which
@@ -104,6 +115,15 @@ mod tests {
     use super::*;
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
+
+    #[test]
+    fn wql_watches_discord_and_steam() {
+        assert_eq!(
+            wql(PROCESS_NAMES),
+            "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process' \
+             AND (TargetInstance.Name = 'Discord.exe' OR TargetInstance.Name = 'steam.exe')"
+        );
+    }
 
     #[test]
     fn coalescer_fires_once_per_window() {
@@ -126,7 +146,8 @@ mod tests {
                 let com = COMLibrary::new().map_err(|e| e.to_string())?;
                 let wmi = WMIConnection::new(com).map_err(|e| e.to_string())?;
                 let mut stream = wmi
-                    .raw_notification::<NewProcessEvent>(wql("PING.EXE"))
+                    // Two names, like production: also checks the OR syntax against WMI.
+                    .raw_notification::<NewProcessEvent>(wql(&["sdss-not-running.exe", "PING.EXE"]))
                     .map_err(|e| e.to_string())?;
                 Command::new("ping")
                     .args(["-n", "6", "127.0.0.1"])

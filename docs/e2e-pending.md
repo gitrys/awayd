@@ -24,3 +24,15 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   off, start `sdssd` → status is applied anyway, status/tray shows the "holidays are ignored"
   warning, a manual override works. Turn the network on → within about 5 min the log shows
   `cached holiday data from Nager.Date` and a new tick runs.
+
+## 2026-11-22 – Fix plan 2b
+
+- **Steam not running (#3):** quit Steam, trigger a status change ("Apply now" or override) →
+  Steam is **not** started; log shows `presence skipped … steam is not running`. Start Steam →
+  log shows `steam.exe started`, then `presence sent` for Steam.
+- **Rejected / missing Discord token (#2):** set an invalid token → one `presence failed`
+  (`permanent=true`), status shows "not retried automatically until the token is changed", no
+  further Discord requests every 30–120 s, Steam is not re-triggered. Set a valid token → Discord
+  is applied again. Remove the token → Discord `presence skipped`, no retries.
+- **WMI query with two names:** after a reboot, `cargo test -p sdss-daemon --lib typed_event`
+  (local WMI quota was exhausted on 2026-11-22, see commit 42c832a).

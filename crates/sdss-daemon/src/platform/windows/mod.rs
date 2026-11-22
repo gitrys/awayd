@@ -2,4 +2,5 @@
 
 pub mod discord_watch;
 pub mod power;
+pub mod process;
 pub mod steam;

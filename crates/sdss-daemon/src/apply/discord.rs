@@ -45,6 +45,18 @@ pub enum DiscordError {
     Other(String),
 }
 
+impl DiscordError {
+    /// Errors a retry cannot fix (rejected token, invalid token header, other 4xx except 429).
+    /// The scheduler does not retry these automatically.
+    pub fn is_permanent(&self) -> bool {
+        match self {
+            Self::Unauthorized | Self::Other(_) => true,
+            Self::Server { code, .. } => (400..500).contains(code) && *code != 429,
+            Self::Transport(_) | Self::RateLimited { .. } => false,
+        }
+    }
+}
+
 impl std::fmt::Display for DiscordError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -120,14 +132,14 @@ async fn patch_status_once(auth_token: &str, online: bool) -> Result<String, Dis
     }
 }
 
-pub async fn patch_status(auth_token: &str, online: bool) -> Result<String, String> {
+pub async fn patch_status(auth_token: &str, online: bool) -> Result<String, DiscordError> {
     let mut backoff_secs = 1u64;
     for attempt in 0..4 {
         match patch_status_once(auth_token, online).await {
             Ok(msg) => return Ok(msg),
             Err(DiscordError::RateLimited { retry_after_secs }) => {
                 if attempt >= 3 {
-                    return Err(DiscordError::RateLimited { retry_after_secs }.to_string());
+                    return Err(DiscordError::RateLimited { retry_after_secs });
                 }
                 warn!(
                     target: "sdss::apply",
@@ -162,10 +174,10 @@ pub async fn patch_status(auth_token: &str, online: bool) -> Result<String, Stri
                 tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                 backoff_secs = (backoff_secs * 2).min(8);
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(e),
         }
     }
-    Err("discord: max retries exceeded".into())
+    Err(DiscordError::Transport("max retries exceeded".into()))
 }
 
 #[cfg(test)]
@@ -176,5 +188,27 @@ mod tests {
     fn transport_errors_are_retryable_variant() {
         let e = DiscordError::Transport("connection reset".into());
         assert!(matches!(e, DiscordError::Transport(_)));
+    }
+
+    #[test]
+    fn permanent_errors_are_not_retried() {
+        assert!(DiscordError::Unauthorized.is_permanent());
+        assert!(DiscordError::Other("invalid header".into()).is_permanent());
+        let bad_request = DiscordError::Server {
+            code: 400,
+            body: String::new(),
+        };
+        assert!(bad_request.is_permanent());
+
+        assert!(!DiscordError::Transport("reset".into()).is_permanent());
+        assert!(!DiscordError::RateLimited {
+            retry_after_secs: 5
+        }
+        .is_permanent());
+        let server = DiscordError::Server {
+            code: 502,
+            body: String::new(),
+        };
+        assert!(!server.is_permanent());
     }
 }
