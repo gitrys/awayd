@@ -2,9 +2,9 @@
 
 use anyhow::Result;
 use sdss_core::config::paths;
-use sdss_core::config::{self};
 use sdss_core::config::schema::DayWindow;
-use sdss_core::schedule::{DAY_LABELS, schedule_days};
+use sdss_core::config::{self};
+use sdss_core::schedule::{schedule_days, DAY_LABELS};
 use sdss_core::status::StatusSnapshot;
 use sdss_ipc::SchedulerClient;
 

@@ -30,9 +30,7 @@ impl WeekdayPickerState {
     }
 
     pub fn to_spec(&self) -> String {
-        let days: Vec<u8> = (1u8..=7)
-            .filter(|&d| self.days[(d - 1) as usize])
-            .collect();
+        let days: Vec<u8> = (1u8..=7).filter(|&d| self.days[(d - 1) as usize]).collect();
         if days.is_empty() {
             return "1".into();
         }
@@ -47,7 +45,11 @@ impl WeekdayPickerState {
 }
 
 /// Draw weekday toggles; returns true if any day changed.
-pub fn show_weekday_picker(ui: &mut egui::Ui, id_source: &str, state: &mut WeekdayPickerState) -> bool {
+pub fn show_weekday_picker(
+    ui: &mut egui::Ui,
+    id_source: &str,
+    state: &mut WeekdayPickerState,
+) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         for (i, label) in LABELS.iter().enumerate() {

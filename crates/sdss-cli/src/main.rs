@@ -42,7 +42,11 @@ enum Commands {
     },
     /// Tail daemon log file (display filter only)
     Logs {
-        #[arg(long, default_value = "0", help = "Show last N lines (0 = entire active file)")]
+        #[arg(
+            long,
+            default_value = "0",
+            help = "Show last N lines (0 = entire active file)"
+        )]
         tail: usize,
         #[arg(long, help = "Substring filter (case-insensitive)")]
         grep: Option<String>,

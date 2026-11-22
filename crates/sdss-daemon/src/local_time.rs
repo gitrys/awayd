@@ -63,7 +63,10 @@ mod tests {
     fn resolve_fold_takes_earlier_instant() {
         // 2027-10-31 02:00-02:59 occurs twice in Berlin (CEST, then CET).
         let n = naive(2027, 10, 31, 2, 30, 0);
-        assert!(Berlin.from_local_datetime(&n).single().is_none(), "precondition: fold");
+        assert!(
+            Berlin.from_local_datetime(&n).single().is_none(),
+            "precondition: fold"
+        );
         let dt = resolve_local(&Berlin, n);
         assert_eq!(dt.naive_local(), n);
         assert_eq!(dt.naive_utc(), naive(2027, 10, 31, 0, 30, 0));
@@ -73,7 +76,10 @@ mod tests {
     fn resolve_gap_skips_to_first_valid_minute() {
         // 2027-03-28 02:00-02:59 does not exist in Berlin.
         let n = naive(2027, 3, 28, 2, 30, 0);
-        assert!(Berlin.from_local_datetime(&n).earliest().is_none(), "precondition: gap");
+        assert!(
+            Berlin.from_local_datetime(&n).earliest().is_none(),
+            "precondition: gap"
+        );
         let dt = resolve_local(&Berlin, n);
         assert_eq!(dt.naive_local(), naive(2027, 3, 28, 3, 0, 0));
         assert_eq!(dt.naive_utc(), naive(2027, 3, 28, 1, 0, 0));
@@ -83,7 +89,10 @@ mod tests {
     fn resolve_midnight_gap() {
         // Santiago starts DST at midnight: 2027-09-05 00:00 does not exist.
         let n = naive(2027, 9, 5, 0, 0, 0);
-        assert!(Santiago.from_local_datetime(&n).earliest().is_none(), "precondition: gap");
+        assert!(
+            Santiago.from_local_datetime(&n).earliest().is_none(),
+            "precondition: gap"
+        );
         let dt = resolve_local(&Santiago, n);
         assert_eq!(dt.naive_local(), naive(2027, 9, 5, 1, 0, 0));
     }
@@ -104,7 +113,9 @@ mod tests {
 
     #[test]
     fn trim_drops_nanoseconds() {
-        let dt = Berlin.from_local_datetime(&naive(2027, 1, 4, 9, 15, 42)).unwrap()
+        let dt = Berlin
+            .from_local_datetime(&naive(2027, 1, 4, 9, 15, 42))
+            .unwrap()
             + Duration::nanoseconds(123_456_789);
         let t = trim_to_minute(dt);
         assert_eq!(t.naive_local(), naive(2027, 1, 4, 9, 15, 0));

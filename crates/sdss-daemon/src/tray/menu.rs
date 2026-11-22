@@ -131,12 +131,7 @@ fn format_next_line(s: &StatusSnapshot, now: DateTime<Local>) -> String {
     if wake.date_naive() == now.date_naive() {
         format!("Next: {time} · {}", s.source)
     } else {
-        format!(
-            "Next: {} {} · {}",
-            wake.format("%m-%d"),
-            time,
-            s.source
-        )
+        format!("Next: {} {} · {}", wake.format("%m-%d"), time, s.source)
     }
 }
 
@@ -240,7 +235,8 @@ mod tests {
     fn format_next_relative() {
         let now = Local::now();
         let wake = (now + chrono::Duration::minutes(90)).format("%Y-%m-%dT%H:%M:%S");
-        let (_, next, _) = format_status_lines(&snap(false, "schedule", Some(&wake.to_string())), now);
+        let (_, next, _) =
+            format_status_lines(&snap(false, "schedule", Some(&wake.to_string())), now);
         assert!(next.starts_with("Next: in "));
         assert!(next.contains('m'));
         assert!(next.contains("schedule"));

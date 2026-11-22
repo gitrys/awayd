@@ -9,11 +9,7 @@ use crate::work_window::{self, Config, ScheduleConfig};
 
 const DEFAULT_MAX_DAYS: i64 = 14;
 
-fn date_blocked(
-    d: NaiveDate,
-    sched: &ScheduleConfig,
-    de: &dyn HolidayLookup,
-) -> bool {
+fn date_blocked(d: NaiveDate, sched: &ScheduleConfig, de: &dyn HolidayLookup) -> bool {
     work_window::date_in_vacation_ranges(d, &sched.vacation_ranges) || de.is_holiday(d)
 }
 
@@ -136,16 +132,27 @@ mod tests {
         use chrono_tz::America::Santiago;
         let cfg = cfg_with_days(default_week_days());
         let start = NaiveDate::from_ymd_opt(2027, 8, 30).unwrap();
-        let gap_midnight = NaiveDate::from_ymd_opt(2027, 9, 5).unwrap().and_time(NaiveTime::MIN);
+        let gap_midnight = NaiveDate::from_ymd_opt(2027, 9, 5)
+            .unwrap()
+            .and_time(NaiveTime::MIN);
         assert!(
-            Santiago.from_local_datetime(&gap_midnight).earliest().is_none(),
+            Santiago
+                .from_local_datetime(&gap_midnight)
+                .earliest()
+                .is_none(),
             "precondition: midnight is in a gap"
         );
 
         let c = flip_candidates(&Santiago, &cfg.schedule, start, 14, &NoHolidays);
 
-        let resolved = NaiveDate::from_ymd_opt(2027, 9, 5).unwrap().and_hms_opt(1, 0, 0).unwrap();
-        assert!(c.iter().any(|t| t.naive_local() == resolved), "gap resolved to 01:00");
+        let resolved = NaiveDate::from_ymd_opt(2027, 9, 5)
+            .unwrap()
+            .and_hms_opt(1, 0, 0)
+            .unwrap();
+        assert!(
+            c.iter().any(|t| t.naive_local() == resolved),
+            "gap resolved to 01:00"
+        );
         assert!(c.windows(2).all(|w| w[0] < w[1]), "sorted and deduplicated");
     }
 
@@ -162,7 +169,14 @@ mod tests {
         let c = flip_candidates(&Berlin, &cfg.schedule, start, 0, &NoHolidays);
 
         let fold = start.and_hms_opt(2, 30, 0).unwrap();
-        let hit = c.iter().find(|t| t.naive_local() == fold).expect("fold boundary present");
-        assert_eq!(hit.naive_utc(), start.and_hms_opt(0, 30, 0).unwrap(), "earlier instant");
+        let hit = c
+            .iter()
+            .find(|t| t.naive_local() == fold)
+            .expect("fold boundary present");
+        assert_eq!(
+            hit.naive_utc(),
+            start.and_hms_opt(0, 30, 0).unwrap(),
+            "earlier instant"
+        );
     }
 }

@@ -47,7 +47,10 @@ fn scheduling_does_not_panic_in_autumn_fold() {
 
     for now in instants {
         let (work_mode, source, _) = effective_work_mode(&cfg, now, &NoHolidays, &st);
-        assert!(!work_mode, "Sunday night is outside the default work window");
+        assert!(
+            !work_mode,
+            "Sunday night is outside the default work window"
+        );
         assert_eq!(source, "schedule");
 
         let next = next_schedule_flip_after_default(&cfg, now, &NoHolidays).expect("next flip");

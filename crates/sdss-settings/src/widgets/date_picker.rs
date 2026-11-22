@@ -161,8 +161,11 @@ pub fn show_date_field(
                                 if cell < offset || day > dim {
                                     ui.label("");
                                 } else {
-                                    let d =
-                                        NaiveDate::from_ymd_opt(state.view_year, state.view_month, day);
+                                    let d = NaiveDate::from_ymd_opt(
+                                        state.view_year,
+                                        state.view_month,
+                                        day,
+                                    );
                                     let is_sel =
                                         selected.zip(d).map(|(a, b)| a == b).unwrap_or(false);
                                     let label = if is_sel {

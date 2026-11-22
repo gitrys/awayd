@@ -57,8 +57,8 @@ fn main() {
 fn acquire_single_instance() -> bool {
     let name: Vec<u16> = "Global\\sdssd\0".encode_utf16().collect();
     unsafe {
-        let mutex: HANDLE = CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr()))
-            .unwrap_or_default();
+        let mutex: HANDLE =
+            CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr())).unwrap_or_default();
         if mutex.is_invalid() {
             return false;
         }

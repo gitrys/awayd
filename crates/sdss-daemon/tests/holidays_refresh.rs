@@ -37,7 +37,10 @@ fn refresh_keeps_old_file_on_failure_and_replaces_it_on_success() {
     // 1) Nager unreachable (connection refused): error, file untouched.
     std::env::set_var("SDSS_NAGER_API_BASE", "http://127.0.0.1:9");
     let err = sync::refresh_country_sync("DE").expect_err("download must fail");
-    assert!(err.contains("existing holiday data stays active"), "message: {err}");
+    assert!(
+        err.contains("existing holiday data stays active"),
+        "message: {err}"
+    );
     assert_eq!(std::fs::read_to_string(&cache).unwrap(), OLD_CONTENT);
 
     // 2) Nager reachable: file replaced with fresh data.

@@ -3,11 +3,11 @@
 
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Timelike};
 
-use sdss_core::config::state::{AppState, OverrideRecord};
 use crate::holidays::HolidayLookup;
 use crate::local_time::trim_to_minute;
 use crate::schedule_next::next_schedule_flip_after_default;
 use crate::work_window::{self, Config};
+use sdss_core::config::state::{AppState, OverrideRecord};
 
 pub const OVERRIDE_JSON_VERSION: u32 = 1;
 
@@ -29,9 +29,7 @@ pub fn override_expires_at(
     if ttl_seconds > 0 {
         return trim_to_minute(now + Duration::seconds(i64::from(ttl_seconds)));
     }
-    let cap = trim_to_minute(
-        now + Duration::seconds(i64::from(OVERRIDE_BOUNDARY_FALLBACK_SECS)),
-    );
+    let cap = trim_to_minute(now + Duration::seconds(i64::from(OVERRIDE_BOUNDARY_FALLBACK_SECS)));
     match next_schedule_flip_after_default(cfg, now, hol) {
         Ok(boundary) if boundary <= cap => trim_to_minute(boundary),
         Ok(_) => cap,

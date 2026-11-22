@@ -6,8 +6,8 @@ pub mod schema;
 pub mod state;
 
 use crate::atomic_fs;
-use anyhow::{Context, Result};
 use crate::schedule;
+use anyhow::{Context, Result};
 use schema::{AppConfig, CONFIG_SCHEMA_VERSION};
 use state::AppState;
 use std::path::Path;

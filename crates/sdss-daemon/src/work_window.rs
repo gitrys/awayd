@@ -73,8 +73,7 @@ pub fn is_work_window(
     }
 
     let now_m = time_to_minutes(
-        when
-            .time()
+        when.time()
             .with_second(0)
             .unwrap()
             .with_nanosecond(0)

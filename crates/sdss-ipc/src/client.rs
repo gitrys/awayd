@@ -79,9 +79,7 @@ impl SchedulerClient {
     }
 
     pub async fn set_token(&mut self, token: &str) -> Result<bool> {
-        let v = self
-            .call("set_token", json!({ "token": token }))
-            .await?;
+        let v = self.call("set_token", json!({ "token": token })).await?;
         Ok(v.as_bool().unwrap_or(false))
     }
 
@@ -189,9 +187,7 @@ pub struct HolidayRow {
 
 impl HolidayRow {
     pub fn display_name(&self) -> &str {
-        self.local_name
-            .as_deref()
-            .unwrap_or(self.date.as_str())
+        self.local_name.as_deref().unwrap_or(self.date.as_str())
     }
 
     pub fn has_proper_name(&self) -> bool {

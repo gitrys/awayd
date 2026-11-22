@@ -248,7 +248,10 @@ mod tests {
 
         assert_eq!(state.days[0].start, row_start_before);
         assert_eq!(state.row_start[0].edit, row_edit_before);
-        assert_eq!(committed[0].start, NaiveTime::from_hms_opt(10, 30, 0).unwrap());
+        assert_eq!(
+            committed[0].start,
+            NaiveTime::from_hms_opt(10, 30, 0).unwrap()
+        );
         assert_eq!(committed[0].end, NaiveTime::from_hms_opt(17, 0, 0).unwrap());
     }
 
@@ -259,6 +262,9 @@ mod tests {
         let mut state = WeekdayScheduleGridState::from_days(&days);
         state.linked = false;
         let committed = state.commit_days_for_save();
-        assert_eq!(committed[0].start, NaiveTime::from_hms_opt(8, 0, 0).unwrap());
+        assert_eq!(
+            committed[0].start,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap()
+        );
     }
 }

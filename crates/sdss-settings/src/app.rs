@@ -9,19 +9,17 @@ use sdss_core::config::schema::{AppConfig, VacationEntry};
 
 use crate::client::Ipc;
 use crate::pages::logs_page::{
-    show_logs_docked_placeholder, show_logs_embedded_tab, show_logs_full, LogViewState,
-    log_popout_viewport_id, LOG_POPOUT_DEFAULT_SIZE,
+    log_popout_viewport_id, show_logs_docked_placeholder, show_logs_embedded_tab, show_logs_full,
+    LogViewState, LOG_POPOUT_DEFAULT_SIZE,
 };
 use crate::ui_prefs::SettingsUiPrefs;
-use crate::zoom_preview;
 use crate::widgets::date_range_picker::{show_date_range_field, DateRangeFieldState};
 use crate::widgets::holiday_list_flyout::{HolidayFlyoutAction, HolidayListFlyout};
 use crate::widgets::searchable_picker::SearchablePicker;
 use crate::widgets::subdiv_labels::{format_subdiv_label, subdiv_options_for_country};
+use crate::widgets::weekday_schedule_grid::{show_weekday_schedule_grid, WeekdayScheduleGridState};
+use crate::zoom_preview;
 use sdss_core::schedule::{normalize_schedule, schedule_days, validate_schedule};
-use crate::widgets::weekday_schedule_grid::{
-    show_weekday_schedule_grid, WeekdayScheduleGridState,
-};
 
 const TOKEN_STORED_PLACEHOLDER: &str = "••••••••••••";
 const STATUS_SLOT_H: f32 = 24.0;
@@ -299,59 +297,59 @@ impl SdssSettingsApp {
                     .spacing([GRID_SPACING, 4.0])
                     .min_col_width(LABEL_W)
                     .show(ui, |ui| {
-                ui.label("Country");
-                if let Some(code) = self.country_picker.show_button(
-                    ui,
-                    "country",
-                    &self.config.schedule.country,
-                    &country_opts,
-                    button_w,
-                ) {
-                    if code != self.config.schedule.country {
-                        self.remember_subdiv();
-                        self.config.schedule.country = code.clone();
-                        self.config.schedule.subdiv = self
-                            .subdiv_by_country
-                            .get(&code)
-                            .cloned()
-                            .unwrap_or_default();
-                        self.reload_subdivs_for_country();
-                        changed = true;
-                    }
-                }
-                ui.end_row();
+                        ui.label("Country");
+                        if let Some(code) = self.country_picker.show_button(
+                            ui,
+                            "country",
+                            &self.config.schedule.country,
+                            &country_opts,
+                            button_w,
+                        ) {
+                            if code != self.config.schedule.country {
+                                self.remember_subdiv();
+                                self.config.schedule.country = code.clone();
+                                self.config.schedule.subdiv = self
+                                    .subdiv_by_country
+                                    .get(&code)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                self.reload_subdivs_for_country();
+                                changed = true;
+                            }
+                        }
+                        ui.end_row();
 
-                ui.label("Region");
-                if let Some(code) = self.subdiv_picker.show_button(
-                    ui,
-                    "subdiv",
-                    &self.config.schedule.subdiv,
-                    &subdiv_opts,
-                    button_w,
-                ) {
-                    if code != self.config.schedule.subdiv {
-                        self.config.schedule.subdiv = code;
-                        self.remember_subdiv();
-                        changed = true;
-                    }
-                }
-                ui.end_row();
+                        ui.label("Region");
+                        if let Some(code) = self.subdiv_picker.show_button(
+                            ui,
+                            "subdiv",
+                            &self.config.schedule.subdiv,
+                            &subdiv_opts,
+                            button_w,
+                        ) {
+                            if code != self.config.schedule.subdiv {
+                                self.config.schedule.subdiv = code;
+                                self.remember_subdiv();
+                                changed = true;
+                            }
+                        }
+                        ui.end_row();
 
-                ui.label("");
-                let subdiv_label = format_subdiv_label(
-                    &self.config.schedule.country,
-                    &self.config.schedule.subdiv,
-                );
-                let action = self.holiday_flyout.show(
-                    ui,
-                    button_w,
-                    &self.config.schedule.country,
-                    &self.config.schedule.subdiv,
-                    &subdiv_label,
-                    self.daemon_ok,
-                );
-                self.handle_holiday_flyout_action(action);
-                ui.end_row();
+                        ui.label("");
+                        let subdiv_label = format_subdiv_label(
+                            &self.config.schedule.country,
+                            &self.config.schedule.subdiv,
+                        );
+                        let action = self.holiday_flyout.show(
+                            ui,
+                            button_w,
+                            &self.config.schedule.country,
+                            &self.config.schedule.subdiv,
+                            &subdiv_label,
+                            self.daemon_ok,
+                        );
+                        self.handle_holiday_flyout_action(action);
+                        ui.end_row();
                     });
             });
         });
@@ -406,14 +404,12 @@ impl SdssSettingsApp {
                 };
                 match phase {
                     ToastPhase::FadeIn { start } => {
-                        let t =
-                            ((self.frame_time - start) / TOAST_FADE_IN).clamp(0.0, 1.0) as f32;
+                        let t = ((self.frame_time - start) / TOAST_FADE_IN).clamp(0.0, 1.0) as f32;
                         Self::ease_smoothstep(t)
                     }
                     ToastPhase::Hold { .. } => 1.0,
                     ToastPhase::FadeOut { start } => {
-                        let t =
-                            ((self.frame_time - start) / TOAST_FADE_OUT).clamp(0.0, 1.0) as f32;
+                        let t = ((self.frame_time - start) / TOAST_FADE_OUT).clamp(0.0, 1.0) as f32;
                         1.0 - Self::ease_smoothstep(t)
                     }
                     ToastPhase::Gap { .. } => 0.0,
@@ -467,10 +463,8 @@ impl SdssSettingsApp {
 
     fn show_status_slot(&self, ui: &mut egui::Ui) {
         let width = ui.available_width();
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(width, STATUS_SLOT_H),
-            egui::Sense::hover(),
-        );
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(width, STATUS_SLOT_H), egui::Sense::hover());
 
         let placeholder_fill = ui
             .visuals()
@@ -495,14 +489,8 @@ impl SdssSettingsApp {
         }
 
         let (base_fill, base_text) = match status.kind {
-            StatusKind::Success => (
-                egui::Color32::from_rgb(72, 160, 88),
-                egui::Color32::WHITE,
-            ),
-            StatusKind::Error => (
-                egui::Color32::from_rgb(180, 60, 60),
-                egui::Color32::WHITE,
-            ),
+            StatusKind::Success => (egui::Color32::from_rgb(72, 160, 88), egui::Color32::WHITE),
+            StatusKind::Error => (egui::Color32::from_rgb(180, 60, 60), egui::Color32::WHITE),
         };
         let fill = base_fill.gamma_multiply(alpha);
         let text_color = base_text.gamma_multiply(alpha);
@@ -651,8 +639,7 @@ impl SdssSettingsApp {
             return;
         };
         let (inner_w, inner_h) = (inner.width(), inner.height());
-        let (store_w, store_h) =
-            Self::store_size_from_inner(inner_w, inner_h, self.zoom_applied);
+        let (store_w, store_h) = Self::store_size_from_inner(inner_w, inner_h, self.zoom_applied);
         let pos_x = outer.min.x;
         let pos_y = outer.min.y;
         let candidate = (store_w, store_h, pos_x, pos_y);
@@ -677,8 +664,16 @@ impl SdssSettingsApp {
 
         let size_changed = (store_w - self.ui_prefs.width).abs() > 0.5
             || (store_h - self.ui_prefs.height).abs() > 0.5;
-        let pos_changed = self.ui_prefs.pos_x.map(|x| (x - pos_x).abs() > 0.5).unwrap_or(true)
-            || self.ui_prefs.pos_y.map(|y| (y - pos_y).abs() > 0.5).unwrap_or(true);
+        let pos_changed = self
+            .ui_prefs
+            .pos_x
+            .map(|x| (x - pos_x).abs() > 0.5)
+            .unwrap_or(true)
+            || self
+                .ui_prefs
+                .pos_y
+                .map(|y| (y - pos_y).abs() > 0.5)
+                .unwrap_or(true);
         if size_changed || pos_changed {
             self.ui_prefs.width = store_w;
             self.ui_prefs.height = store_h;
@@ -895,10 +890,7 @@ impl SdssSettingsApp {
         }
         for v in &self.config.schedule.vacations {
             if !Self::vacation_dates_valid(&v.start, &v.end) {
-                self.set_status_error(format!(
-                    "Vacation '{}': invalid or reversed dates",
-                    v.label
-                ));
+                self.set_status_error(format!("Vacation '{}': invalid or reversed dates", v.label));
                 return;
             }
         }
@@ -917,7 +909,8 @@ impl SdssSettingsApp {
             }
         };
         if !self.daemon_ok {
-            if let Err(e) = sdss_core::atomic_fs::atomic_write(&paths::config_file(), toml.as_bytes())
+            if let Err(e) =
+                sdss_core::atomic_fs::atomic_write(&paths::config_file(), toml.as_bytes())
             {
                 self.set_status_error(format!("write error: {e}"));
             } else {
@@ -969,7 +962,9 @@ impl eframe::App for SdssSettingsApp {
             if let Some(err) = self.config_error.clone() {
                 match config_error_banner(ui, &err) {
                     Some(ConfigErrorAction::Reload) => self.reload(),
-                    Some(ConfigErrorAction::BackupAndStartOver) => self.backup_config_and_start_over(),
+                    Some(ConfigErrorAction::BackupAndStartOver) => {
+                        self.backup_config_and_start_over()
+                    }
                     None => {}
                 }
             }
@@ -981,18 +976,13 @@ impl eframe::App for SdssSettingsApp {
                 self.wizard_ui(ui);
             } else {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut self.active_tab,
-                        SettingsTab::Scheduler,
-                        "Scheduler",
-                    );
+                    ui.selectable_value(&mut self.active_tab, SettingsTab::Scheduler, "Scheduler");
                     ui.selectable_value(&mut self.active_tab, SettingsTab::Display, "Display");
                     ui.selectable_value(&mut self.active_tab, SettingsTab::Logs, "Logs");
                 });
                 ui.separator();
 
-                let logs_active =
-                    self.active_tab == SettingsTab::Logs || self.log_popout_open;
+                let logs_active = self.active_tab == SettingsTab::Logs || self.log_popout_open;
                 if logs_active {
                     if self.log_view.is_none() {
                         self.log_view = Some(LogViewState::new());
@@ -1087,7 +1077,9 @@ impl SdssSettingsApp {
         ui.heading("Setup wizard");
         match self.wizard_step {
             0 => {
-                ui.label("Welcome — configure automatic Discord/Steam status from your work schedule.");
+                ui.label(
+                    "Welcome — configure automatic Discord/Steam status from your work schedule.",
+                );
                 if ui.button("Next").clicked() {
                     self.wizard_step = 1;
                 }
@@ -1238,11 +1230,7 @@ impl SdssSettingsApp {
                 ) {
                     changed = true;
                 }
-                if ui
-                    .button("🗑")
-                    .on_hover_text("Remove vacation")
-                    .clicked()
-                {
+                if ui.button("🗑").on_hover_text("Remove vacation").clicked() {
                     remove = Some(i);
                 }
             });
@@ -1345,7 +1333,10 @@ mod tests {
     #[test]
     fn unsupported_schema_version_blocks_saving() {
         let text = valid_toml().replace("schema_version = 1", "schema_version = 2");
-        assert!(text.contains("schema_version = 2"), "precondition: version replaced");
+        assert!(
+            text.contains("schema_version = 2"),
+            "precondition: version replaced"
+        );
         let err = resolve_loaded_config(true, Ok(text)).unwrap_err();
         assert!(err.contains("schema_version"), "message: {err}");
     }

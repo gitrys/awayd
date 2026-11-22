@@ -167,10 +167,7 @@ pub fn list_cached_bundles() -> Vec<(String, i32, i32, String)> {
             continue;
         };
         let (y0, y1) = data::file_year_range(&file);
-        let src = file
-            .source
-            .clone()
-            .unwrap_or_else(|| "cache".to_string());
+        let src = file.source.clone().unwrap_or_else(|| "cache".to_string());
         out.push((stem.to_uppercase(), y0, y1, src));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));

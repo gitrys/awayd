@@ -26,7 +26,9 @@ pub fn logs(tail: usize, grep: Option<String>, level: Option<String>) -> Result<
     let grep = grep.unwrap_or_default();
 
     let file = File::open(&path)?;
-    let lines: Vec<String> = BufReader::new(file).lines().collect::<std::io::Result<_>>()?;
+    let lines: Vec<String> = BufReader::new(file)
+        .lines()
+        .collect::<std::io::Result<_>>()?;
 
     let slice = if tail > 0 {
         &lines[lines.len().saturating_sub(tail)..]

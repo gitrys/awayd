@@ -20,7 +20,9 @@ use tracing_subscriber::Layer;
 
 use crate::config::paths;
 use crate::config::schema::AdvancedSection;
-use crate::log::{capture_level_filter_spec, parse_capture_level, redact_message, LOG_SCHEMA_VERSION};
+use crate::log::{
+    capture_level_filter_spec, parse_capture_level, redact_message, LOG_SCHEMA_VERSION,
+};
 
 /// CLI / settings: stderr only.
 pub fn init_tracing() {
@@ -43,7 +45,9 @@ pub fn init_daemon_logging(advanced: &AdvancedSection) -> anyhow::Result<()> {
         advanced.log_max_files,
     )?));
 
-    let file_layer = NdjsonLayer { writer: writer.clone() };
+    let file_layer = NdjsonLayer {
+        writer: writer.clone(),
+    };
 
     let spec = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| default_capture_filter(advanced))
@@ -197,7 +201,10 @@ impl Visit for FieldVisitor {
         let key = field.name();
         if key == "message" {
             self.message = format!("{value:?}");
-            if self.message.starts_with('"') && self.message.ends_with('"') && self.message.len() >= 2 {
+            if self.message.starts_with('"')
+                && self.message.ends_with('"')
+                && self.message.len() >= 2
+            {
                 self.message = self.message[1..self.message.len() - 1].to_string();
             }
         } else {
@@ -211,8 +218,10 @@ impl Visit for FieldVisitor {
         if key == "message" {
             self.message = value.to_string();
         } else {
-            self.fields
-                .insert(key.to_string(), serde_json::Value::String(value.to_string()));
+            self.fields.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
         }
     }
 

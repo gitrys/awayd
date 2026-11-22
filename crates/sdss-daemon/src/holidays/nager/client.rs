@@ -69,8 +69,7 @@ pub fn fetch_public_holidays_blocking(
     if !resp.status().is_success() {
         return Err(format!("PublicHolidays/{year}/{cc} HTTP {}", resp.status()));
     }
-    resp.json::<Vec<PublicHoliday>>()
-        .map_err(|e| e.to_string())
+    resp.json::<Vec<PublicHoliday>>().map_err(|e| e.to_string())
 }
 
 pub async fn fetch_available_countries() -> Result<Vec<AvailableCountry>, String> {

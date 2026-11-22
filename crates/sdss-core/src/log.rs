@@ -82,7 +82,10 @@ pub fn matches_display_filter(
     if q.is_empty() {
         return true;
     }
-    entry.haystack().to_ascii_lowercase().contains(&q.to_ascii_lowercase())
+    entry
+        .haystack()
+        .to_ascii_lowercase()
+        .contains(&q.to_ascii_lowercase())
 }
 
 pub fn parse_log_line(line: &str) -> Option<LogEntry> {

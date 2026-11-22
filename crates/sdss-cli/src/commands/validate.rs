@@ -1,8 +1,8 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 
 use anyhow::Result;
-use sdss_core::config::paths;
 use sdss_core::config;
+use sdss_core::config::paths;
 use sdss_core::schedule::validate_schedule;
 
 pub fn validate() -> Result<()> {

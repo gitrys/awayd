@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use sdss_core::status::StatusSnapshot;
 use tokio::sync::watch;
-use tray_icon::TrayIconBuilder;
 use tray_icon::menu::MenuEvent;
+use tray_icon::TrayIconBuilder;
 use tray_icon::{MouseButtonState, TrayIconEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
@@ -27,11 +27,7 @@ fn pump_win32_messages() {
     }
 }
 
-fn apply_status_ui(
-    tray: &tray_icon::TrayIcon,
-    tray_menu: &menu::TrayMenu,
-    s: &StatusSnapshot,
-) {
+fn apply_status_ui(tray: &tray_icon::TrayIcon, tray_menu: &menu::TrayMenu, s: &StatusSnapshot) {
     tray_menu.refresh_status_lines(s);
     let title = format!(
         "SDSS — {} ({})",
@@ -83,10 +79,7 @@ pub fn run_tray(
             menu::handle_event(event, service.clone(), rt.clone());
         }
         if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click {
-                button_state, ..
-            } = event
-            {
+            if let TrayIconEvent::Click { button_state, .. } = event {
                 if button_state == MouseButtonState::Up {
                     if let Some(ref s) = latest {
                         tray_menu.refresh_status_lines(s);

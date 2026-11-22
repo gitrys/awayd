@@ -3,9 +3,9 @@
 
 use chrono::NaiveDate;
 
+use crate::work_window::{Config, ScheduleConfig};
 use sdss_core::config::schema::{AppConfig, VacationEntry};
 use sdss_core::schedule::{normalize_schedule, schedule_days, validate_schedule};
-use crate::work_window::{Config, ScheduleConfig};
 
 pub fn vacation_ranges_from_entries(
     entries: &[VacationEntry],

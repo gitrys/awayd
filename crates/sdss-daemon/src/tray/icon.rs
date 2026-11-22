@@ -151,7 +151,10 @@ mod tests {
     fn status_cell_green_when_online() {
         let off = rasterize_svg(SVG_ONLINE).expect("online svg");
         let px = rgba_at(&off, STATUS_X, STATUS_Y);
-        assert!(px[1] > px[0], "expected green-ish at status cell, got {px:?}");
+        assert!(
+            px[1] > px[0],
+            "expected green-ish at status cell, got {px:?}"
+        );
     }
 
     #[test]

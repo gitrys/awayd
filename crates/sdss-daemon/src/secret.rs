@@ -1,10 +1,10 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 //! Credential storage: system keychain (`keyring` → Secret Service / kwallet) + file fallback.
 
-use sdss_core::atomic_fs;
-use sdss_core::config::paths;
 use anyhow::Result;
 use keyring::Entry;
+use sdss_core::atomic_fs;
+use sdss_core::config::paths;
 use tracing::warn;
 
 const SERVICE: &str = "org.steamdiscord.Scheduler";

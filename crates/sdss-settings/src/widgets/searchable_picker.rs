@@ -46,14 +46,7 @@ impl SearchablePicker {
             }
         }
 
-        let picked = self.popup_below(
-            ui,
-            popup_id,
-            &response,
-            width,
-            selected_code,
-            options,
-        );
+        let picked = self.popup_below(ui, popup_id, &response, width, selected_code, options);
 
         if !ui.memory(|m| m.is_popup_open(popup_id)) {
             self.was_open = false;

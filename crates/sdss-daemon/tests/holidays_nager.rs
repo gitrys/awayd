@@ -65,6 +65,8 @@ fn ensure_country_writes_cache_and_loads() {
 
     let by_holidays = &v["by_year"]["2026"]["by_subdiv"]["BY"]["by_category"]["public"];
     let first = &by_holidays[0];
-    assert!(first.get("local_name").is_some() || first.get("localName").is_some() || first.is_string());
+    assert!(
+        first.get("local_name").is_some() || first.get("localName").is_some() || first.is_string()
+    );
     assert!(first.get("name").is_some() || first.is_string());
 }

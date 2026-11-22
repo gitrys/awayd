@@ -8,7 +8,7 @@ use anyhow::Context;
 use chrono::{DateTime, Datelike, Local};
 use sdss_core::status::{LastApplyRecord, StatusSnapshot, STATUS_SCHEMA_VERSION};
 use tokio::sync::mpsc;
-use tokio::sync::{Notify, RwLock, watch};
+use tokio::sync::{watch, Notify, RwLock};
 
 use crate::apply::apply_presence;
 use crate::apply::ApplyResult;

@@ -6,8 +6,8 @@ use std::sync::mpsc::Sender;
 use tracing::info;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage,
-    HMENU, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_POWERBROADCAST, WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
+    TranslateMessage, HMENU, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_POWERBROADCAST, WNDCLASSW,
 };
 
 const PBT_APMRESUMESUSPEND: WPARAM = WPARAM(7);

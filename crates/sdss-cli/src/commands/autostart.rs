@@ -10,7 +10,10 @@ const VALUE_NAME: &str = "SDSS";
 pub fn install() -> Result<()> {
     let exe = sdss_core::launch::resolve_sdss_binary("sdssd");
     if !exe.is_file() {
-        anyhow::bail!("sdssd.exe not found beside {}", std::env::current_exe()?.display());
+        anyhow::bail!(
+            "sdssd.exe not found beside {}",
+            std::env::current_exe()?.display()
+        );
     }
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (run, _) = hkcu.create_subkey(RUN_KEY)?;

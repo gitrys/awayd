@@ -93,9 +93,11 @@ fn filtered_rows(state: &LogViewState, visuals: &egui::Visuals) -> Vec<(String, 
 
 pub fn show_logs_controls(ui: &mut egui::Ui, state: &mut LogViewState, daemon_ok: bool) {
     ui.label(
-        egui::RichText::new("Filters hide lines in the viewer only; full history stays in state/logs/.")
-            .weak()
-            .small(),
+        egui::RichText::new(
+            "Filters hide lines in the viewer only; full history stays in state/logs/.",
+        )
+        .weak()
+        .small(),
     );
     if !daemon_ok {
         ui.label(
@@ -188,10 +190,7 @@ pub fn show_logs_embedded_tab(
 }
 
 pub fn show_logs_docked_placeholder(ui: &mut egui::Ui, dock: &mut bool) {
-    ui.label(
-        egui::RichText::new("Logs are shown in a separate window.")
-            .weak(),
-    );
+    ui.label(egui::RichText::new("Logs are shown in a separate window.").weak());
     if ui.button("Dock logs").clicked() {
         *dock = true;
     }

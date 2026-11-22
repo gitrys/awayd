@@ -95,9 +95,7 @@ pub fn show_time_field_inline(
         }
 
         let clock_id = ui.id().with(id_source).with("clock");
-        let clock_response = ui
-            .button("🕐")
-            .on_hover_text("Pick time (drag sliders)");
+        let clock_response = ui.button("🕐").on_hover_text("Pick time (drag sliders)");
         if clock_response.clicked() {
             if let Some(t) = parse_time(&state.edit) {
                 state.popup_hour = t.hour() as i32;
@@ -116,12 +114,8 @@ pub fn show_time_field_inline(
                 ui.set_min_width(260.0);
                 ui.spacing_mut().slider_width = 140.0;
                 ui.label("Time");
-                ui.add(
-                    egui::Slider::new(&mut state.popup_hour, 0..=23).text("Hour"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut state.popup_minute, 0..=59).text("Min"),
-                );
+                ui.add(egui::Slider::new(&mut state.popup_hour, 0..=23).text("Hour"));
+                ui.add(egui::Slider::new(&mut state.popup_minute, 0..=59).text("Min"));
                 ui.label("Drag sliders to adjust");
                 ui.horizontal(|ui| {
                     if ui.button("OK").clicked() {

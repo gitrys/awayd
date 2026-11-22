@@ -28,7 +28,7 @@ pub async fn is_work_host_reachable(mode: &ModeSection) -> bool {
         return false;
     }
     let port = mode.work_port;
-  {
+    {
         if let Ok(guard) = CACHE.lock() {
             if let Some(c) = guard.as_ref() {
                 if c.host == host && c.port == port && c.at.elapsed() < PROBE_TTL {

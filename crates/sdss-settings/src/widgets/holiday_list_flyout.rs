@@ -48,7 +48,11 @@ impl HolidayListFlyout {
     }
 
     fn query_key(country: &str, subdiv: &str, year: i32) -> String {
-        format!("{}|{}|{year}", country.to_uppercase(), subdiv.to_uppercase())
+        format!(
+            "{}|{}|{year}",
+            country.to_uppercase(),
+            subdiv.to_uppercase()
+        )
     }
 
     fn needs_reload(&self, country: &str, subdiv: &str) -> bool {
@@ -103,18 +107,14 @@ impl HolidayListFlyout {
                 );
 
                 ui.horizontal(|ui| {
-                    let prev = ui.add_enabled(
-                        self.view_year > self.year_min,
-                        egui::Button::new("◀"),
-                    );
+                    let prev =
+                        ui.add_enabled(self.view_year > self.year_min, egui::Button::new("◀"));
                     if prev.clicked() {
                         self.view_year -= 1;
                     }
                     ui.label(format!("{}", self.view_year));
-                    let next = ui.add_enabled(
-                        self.view_year < self.year_max,
-                        egui::Button::new("▶"),
-                    );
+                    let next =
+                        ui.add_enabled(self.view_year < self.year_max, egui::Button::new("▶"));
                     if next.clicked() {
                         self.view_year += 1;
                     }
@@ -148,11 +148,9 @@ impl HolidayListFlyout {
                 if daemon_ok && self.stale_names() {
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(
-                            "Holiday names appear after refreshing cached data.",
-                        )
-                        .weak()
-                        .small(),
+                        egui::RichText::new("Holiday names appear after refreshing cached data.")
+                            .weak()
+                            .small(),
                     );
                     if ui.button("Refresh holiday data").clicked() {
                         action = HolidayFlyoutAction::RefreshCountry;

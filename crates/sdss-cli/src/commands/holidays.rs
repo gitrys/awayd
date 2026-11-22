@@ -8,7 +8,10 @@ use sdss_ipc::SchedulerClient;
 pub async fn list() -> Result<()> {
     let mut client = SchedulerClient::new();
     if !client.ping().await.unwrap_or(false) {
-        println!("daemon offline — cache dir: {}", paths::holidays_dir().display());
+        println!(
+            "daemon offline — cache dir: {}",
+            paths::holidays_dir().display()
+        );
         return Ok(());
     }
     // list_holiday_bundles not exposed on client yet — print cache dir

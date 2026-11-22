@@ -9,9 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tracing::warn;
 
-use crate::protocol::{
-    decode_line, encode_line, JsonRpcRequest, JsonRpcResponse, PIPE_NAME,
-};
+use crate::protocol::{decode_line, encode_line, JsonRpcRequest, JsonRpcResponse, PIPE_NAME};
 
 /// Trait implemented by the resident scheduler service.
 #[async_trait::async_trait]
@@ -101,42 +99,70 @@ async fn dispatch(api: &Arc<dyn SchedulerApi>, req: &JsonRpcRequest) -> JsonRpcR
         "get_config_toml" => Ok(json!(api.get_config_toml().await)),
         "has_token" => Ok(json!(api.has_token().await)),
         "list_subdivisions" => {
-            let country = req.params.get("country").and_then(|v| v.as_str()).unwrap_or("");
+            let country = req
+                .params
+                .get("country")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             Ok(json!(api.list_subdivisions(country).await))
         }
         "list_available_countries" => Ok(json!(api.list_available_countries())),
         "holiday_data_status" => {
-            let country = req.params.get("country").and_then(|v| v.as_str()).unwrap_or("");
+            let country = req
+                .params
+                .get("country")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let s = api.holiday_data_status(country).await;
             Ok(json!([s.0, s.1, s.2, s.3, s.4]))
         }
         "refresh_holiday_data" => {
-            let country = req.params.get("country").and_then(|v| v.as_str()).unwrap_or("");
+            let country = req
+                .params
+                .get("country")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             Ok(json!(api.refresh_holiday_data(country)))
         }
         "list_holidays" => {
-            let country = req.params.get("country").and_then(|v| v.as_str()).unwrap_or("");
-            let subdiv = req.params.get("subdiv").and_then(|v| v.as_str()).unwrap_or("");
-            let year = req
+            let country = req
                 .params
-                .get("year")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
+                .get("country")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let subdiv = req
+                .params
+                .get("subdiv")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let year = req.params.get("year").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             Ok(api.list_holidays(country, subdiv, year).await)
         }
         "set_config_toml" => {
-            let toml = req.params.get("toml").and_then(|v| v.as_str()).unwrap_or("");
+            let toml = req
+                .params
+                .get("toml")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             Ok(json!(api.set_config_toml(toml).await))
         }
         "reload_config" => Ok(json!(api.reload_config().await)),
         "set_token" => {
-            let token = req.params.get("token").and_then(|v| v.as_str()).unwrap_or("");
+            let token = req
+                .params
+                .get("token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             Ok(json!(api.set_token(token).await))
         }
         "clear_token" => Ok(json!(api.clear_token().await)),
         "apply_now" => Ok(json!(api.apply_now().await)),
         "set_override" => {
-            let mode = req.params.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+            let mode = req
+                .params
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let ttl = req
                 .params
                 .get("ttl_seconds")

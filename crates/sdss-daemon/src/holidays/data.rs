@@ -91,9 +91,7 @@ pub struct HolidayListEntry {
 impl HolidayListEntry {
     /// Primary label: local name only; legacy rows fall back to the date.
     pub fn display_name(&self) -> &str {
-        self.local_name
-            .as_deref()
-            .unwrap_or(self.date.as_str())
+        self.local_name.as_deref().unwrap_or(self.date.as_str())
     }
 
     pub fn has_proper_name(&self) -> bool {
@@ -191,11 +189,7 @@ pub fn load_holiday_set(country: &str, subdiv: &str, year: i32) -> Result<Holida
     out
 }
 
-fn load_holiday_set_uncached(
-    country: &str,
-    subdiv: &str,
-    year: i32,
-) -> Result<HolidaySet, String> {
+fn load_holiday_set_uncached(country: &str, subdiv: &str, year: i32) -> Result<HolidaySet, String> {
     let Some((raw, _src)) = resolve_country_bytes(country) else {
         return Err(format!("no holiday data for country {country}"));
     };
@@ -214,17 +208,15 @@ fn load_holiday_set_uncached(
     let mut dates = HashSet::new();
     if let Some(list) = sub.by_category.get(HOLIDAY_CATEGORY) {
         for rec in list {
-            let nd = NaiveDate::parse_from_str(rec.date_str(), "%Y-%m-%d").map_err(|e| e.to_string())?;
+            let nd =
+                NaiveDate::parse_from_str(rec.date_str(), "%Y-%m-%d").map_err(|e| e.to_string())?;
             dates.insert(nd);
         }
     }
     Ok(HolidaySet { dates })
 }
 
-fn subdiv_entry_for<'a>(
-    yr: &'a YearEntry,
-    subdiv: &str,
-) -> Option<&'a SubdivEntry> {
+fn subdiv_entry_for<'a>(yr: &'a YearEntry, subdiv: &str) -> Option<&'a SubdivEntry> {
     let subdiv_key = if subdiv.is_empty() {
         "".to_string()
     } else {

@@ -133,7 +133,10 @@ mod tests {
                     .stdout(Stdio::null())
                     .spawn()
                     .map_err(|e| e.to_string())?;
-                let ev = stream.next().ok_or("stream ended")?.map_err(|e| e.to_string())?;
+                let ev = stream
+                    .next()
+                    .ok_or("stream ended")?
+                    .map_err(|e| e.to_string())?;
                 Ok((ev.target_instance.process_id, ev.target_instance.name))
             };
             let _ = tx.send(run());

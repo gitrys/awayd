@@ -101,11 +101,7 @@ fn day_secondary_clicked(response: &egui::Response, ui: &egui::Ui) -> bool {
             && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)))
 }
 
-fn handle_day_secondary(
-    state: &mut DateRangeFieldState,
-    start: &mut String,
-    end: &mut String,
-) {
+fn handle_day_secondary(state: &mut DateRangeFieldState, start: &mut String, end: &mut String) {
     if is_picking_in_progress(state) {
         clear_in_progress_pick(state);
     } else if !start.trim().is_empty() || !end.trim().is_empty() {
@@ -227,8 +223,13 @@ pub fn show_date_range_field(
                                         day,
                                     )
                                     .expect("valid day");
-                                    let (fill, strong) =
-                                        day_cell_style(d, state.tentative_start, start, end, ui.visuals());
+                                    let (fill, strong) = day_cell_style(
+                                        d,
+                                        state.tentative_start,
+                                        start,
+                                        end,
+                                        ui.visuals(),
+                                    );
                                     let label = if strong {
                                         egui::RichText::new(format!("{day}")).strong()
                                     } else {
@@ -301,7 +302,10 @@ mod tests {
 
     #[test]
     fn range_display_formats() {
-        assert_eq!(range_display("2026-06-10", "2026-06-15"), "2026-06-10 – 2026-06-15");
+        assert_eq!(
+            range_display("2026-06-10", "2026-06-15"),
+            "2026-06-10 – 2026-06-15"
+        );
         assert_eq!(range_display("2026-06-10", "2026-06-10"), "2026-06-10");
     }
 

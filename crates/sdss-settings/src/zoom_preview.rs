@@ -49,6 +49,8 @@ mod tests {
     fn scaled_preview_style_scales_interact_size() {
         let base = egui::Style::default();
         let scaled = scaled_preview_style(&base, 0.75);
-        assert!((scaled.spacing.interact_size.y - base.spacing.interact_size.y * 0.75).abs() < 0.01);
+        assert!(
+            (scaled.spacing.interact_size.y - base.spacing.interact_size.y * 0.75).abs() < 0.01
+        );
     }
 }

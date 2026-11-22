@@ -65,13 +65,7 @@ impl SchedulerApi for SchedulerService {
 
     async fn holiday_data_status(&self, country: &str) -> (bool, i32, i32, String, String) {
         let s = holidays::sync::holiday_data_status(country);
-        (
-            s.ready,
-            s.year_min,
-            s.year_max,
-            s.fetched_at,
-            s.message,
-        )
+        (s.ready, s.year_min, s.year_max, s.fetched_at, s.message)
     }
 
     fn refresh_holiday_data(&self, country: &str) -> String {

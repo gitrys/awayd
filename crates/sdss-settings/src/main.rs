@@ -18,11 +18,8 @@ fn main() {
         return;
     }
     let prefs = SettingsUiPrefs::load();
-    let (inner_w, inner_h) = app::SdssSettingsApp::inner_size_from_store(
-        prefs.width,
-        prefs.height,
-        prefs.zoom,
-    );
+    let (inner_w, inner_h) =
+        app::SdssSettingsApp::inner_size_from_store(prefs.width, prefs.height, prefs.zoom);
     let mut viewport = egui::ViewportBuilder::default().with_inner_size([inner_w, inner_h]);
     if let (Some(x), Some(y)) = (prefs.pos_x, prefs.pos_y) {
         viewport = viewport.with_position([x, y]);
@@ -44,8 +41,8 @@ fn main() {
 fn acquire_single_instance() -> bool {
     let name: Vec<u16> = "Global\\sdss-settings\0".encode_utf16().collect();
     unsafe {
-        let mutex: HANDLE = CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr()))
-            .unwrap_or_default();
+        let mutex: HANDLE =
+            CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr())).unwrap_or_default();
         if mutex.is_invalid() {
             return false;
         }
