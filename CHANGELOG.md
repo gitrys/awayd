@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0]
+## [0.1.0] - 2026-11-22
 
 First public release of awayd for Windows.
 
@@ -37,3 +37,6 @@ First public release of awayd for Windows.
   against Discord's Terms of Service. See the warning in the README; without a token awayd
   only manages Steam.
 - The executables are not code-signed yet; Windows SmartScreen may warn on first start.
+
+[Unreleased]: https://github.com/gitrys/awayd/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/gitrys/awayd/releases/tag/v0.1.0
