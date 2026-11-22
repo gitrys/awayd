@@ -1,16 +1,23 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 //! Main scheduling loop: next wake deadline, poke channel, coordinated shutdown.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use awayd_core::status::{LastApplyRecord, StatusSnapshot, SOURCE_ERROR, STATUS_SCHEMA_VERSION};
+use awayd_core::backends as backend_table;
+use awayd_core::status::{
+    BackendApplyRecord, BackendApplyStatus, LastApplyRecord, StatusSnapshot, SOURCE_ERROR,
+    STATUS_SCHEMA_VERSION,
+};
 use chrono::{DateTime, Datelike, Local};
 use tokio::sync::mpsc;
 use tokio::sync::{watch, Notify, RwLock};
 
-use crate::apply::{apply_presence, ApplyPlan, ApplyResult, BackendOutcome};
+use crate::apply::{
+    apply_presence, build_backend, ApplyPlan, ApplyResult, Backend, BackendOutcome,
+};
 use crate::holidays::{load_holidays_or_empty, HolidaySet};
 use crate::local_time::{resolve_local, trim_to_minute};
 use crate::override_state;
@@ -24,79 +31,151 @@ use awayd_core::config::paths;
 use awayd_core::config::state::AppState;
 use awayd_core::config::{self};
 
-/// Last successfully applied `online` flag per backend (`online` = personal / not work).
-#[derive(Debug, Clone, Default)]
-struct BackendApplied {
-    discord_online: Option<bool>,
-    steam_online: Option<bool>,
-    /// Token Discord rejected permanently (fingerprint + error). Discord is not retried
-    /// until the token changes or the daemon restarts.
-    discord_rejected: Option<(u64, String)>,
+/// State of one backend between ticks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct BackendState {
+    /// Last successfully applied `online` flag (`online` = personal / not work).
+    online: Option<bool>,
+    /// Credential the backend rejected permanently (fingerprint + error). The backend is not
+    /// retried until the credential changes or the daemon restarts.
+    rejected: Option<(u64, String)>,
 }
+
+/// Per backend id; backends without entry have not been applied yet.
+type BackendApplied = HashMap<&'static str, BackendState>;
 
 const APPLY_RETRY_INITIAL: Duration = Duration::from_secs(30);
 const APPLY_RETRY_MAX: Duration = Duration::from_secs(120);
 
-/// In-memory fingerprint to notice a token change without keeping another copy of it.
-fn token_fingerprint(token: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    token.trim().hash(&mut h);
-    h.finish()
+/// Backends of this tick, with their stored credentials. A backend whose credential is
+/// missing is still listed (it skips itself); the missing credential is reported in `errors`.
+async fn load_backends(errors: &mut Vec<String>) -> anyhow::Result<Vec<Box<dyn Backend>>> {
+    let mut list = Vec::new();
+    for info in backend_table::ALL {
+        let credential = match info.credential_label {
+            Some(label) => {
+                let c = secret::get_credential(info.id).await?.unwrap_or_default();
+                if c.trim().is_empty() {
+                    errors.push(format!(
+                        "{label} missing (Credential Manager or fallback file)"
+                    ));
+                }
+                c
+            }
+            None => String::new(),
+        };
+        list.push(build_backend(info, credential));
+    }
+    Ok(list)
+}
+
+/// A backend rejected its current credential permanently.
+fn is_blocked(applied: &BackendApplied, b: &dyn Backend) -> bool {
+    matches!(
+        applied.get(b.id()).and_then(|s| s.rejected.as_ref()),
+        Some((fp, _)) if *fp == b.credential_fingerprint()
+    )
+}
+
+/// Forget backends that are no longer in the list: one that comes back starts fresh.
+fn forget_removed(applied: &mut BackendApplied, backends: &[Box<dyn Backend>]) {
+    applied.retain(|id, _| backends.iter().any(|b| b.id() == *id));
 }
 
 /// Per backend: apply when forced (startup), poked (`immediate`) or not yet in the target
-/// state. Only the stale backend is applied, so a Discord retry no longer re-triggers Steam.
-/// A permanently rejected token blocks Discord even for pokes: the poke source (user, resume,
-/// process watcher) is not known here.
+/// state. Only stale backends are applied, so a retry of one backend does not re-trigger the
+/// others. A permanently rejected credential blocks its backend even for pokes: the poke
+/// source (user, resume, process watcher) is not known here.
 fn plan_apply(
     force: bool,
     immediate: bool,
     target_online: bool,
     applied: &BackendApplied,
-    token_fp: u64,
+    backends: &[Box<dyn Backend>],
 ) -> ApplyPlan {
-    let discord_blocked = matches!(&applied.discord_rejected, Some((fp, _)) if *fp == token_fp);
-    ApplyPlan {
-        discord: !discord_blocked
-            && (force || immediate || applied.discord_online != Some(target_online)),
-        steam: force || immediate || applied.steam_online != Some(target_online),
-    }
+    let ids = backends
+        .iter()
+        .filter(|b| {
+            let online = applied.get(b.id()).and_then(|s| s.online);
+            !is_blocked(applied, b.as_ref())
+                && (force || immediate || online != Some(target_online))
+        })
+        .map(|b| b.id())
+        .collect();
+    ApplyPlan { ids }
 }
 
 fn record_apply(
     applied: &mut BackendApplied,
     target_online: bool,
     result: &ApplyResult,
-    token_fp: u64,
+    backends: &[Box<dyn Backend>],
 ) {
-    match &result.discord {
-        BackendOutcome::Sent => {
-            applied.discord_online = Some(target_online);
-            applied.discord_rejected = None;
+    for (id, outcome) in &result.outcomes {
+        let fp = backends
+            .iter()
+            .find(|b| b.id() == *id)
+            .map(|b| b.credential_fingerprint())
+            .unwrap_or_default();
+        let st = applied.entry(*id).or_default();
+        match outcome {
+            BackendOutcome::Sent => {
+                st.online = Some(target_online);
+                st.rejected = None;
+            }
+            BackendOutcome::Failed {
+                error,
+                permanent: true,
+            } => st.rejected = Some((fp, error.clone())),
+            // Not applied (program not running, no credential): apply again once possible
+            // (process watcher poke, credential change or next tick).
+            BackendOutcome::Skipped(_) => st.online = None,
+            _ => {}
         }
-        BackendOutcome::Failed {
-            error,
-            permanent: true,
-        } => applied.discord_rejected = Some((token_fp, error.clone())),
-        _ => {}
-    }
-    match &result.steam {
-        BackendOutcome::Sent => applied.steam_online = Some(target_online),
-        // Not running: apply again once it runs (process watcher poke or next tick).
-        BackendOutcome::Skipped(_) => applied.steam_online = None,
-        _ => {}
     }
 }
 
-/// Status message while Discord is blocked for the current token.
-fn discord_blocked_message(applied: &BackendApplied, token_fp: u64) -> Option<String> {
-    match &applied.discord_rejected {
-        Some((fp, error)) if *fp == token_fp => Some(format!(
-            "discord: {error}; not retried automatically until the token is changed"
-        )),
-        _ => None,
-    }
+/// Status messages for backends blocked on their current credential.
+fn blocked_messages(applied: &BackendApplied, backends: &[Box<dyn Backend>]) -> Vec<String> {
+    backends
+        .iter()
+        .filter(|b| is_blocked(applied, b.as_ref()))
+        .filter_map(|b| {
+            let (_, error) = applied.get(b.id())?.rejected.as_ref()?;
+            let what = backend_table::find(b.id())
+                .and_then(|i| i.credential_label)
+                .unwrap_or("credential");
+            Some(format!(
+                "{}: {error}; not retried automatically until the {what} is changed",
+                b.id()
+            ))
+        })
+        .collect()
+}
+
+/// Status entries for the backends applied in this run.
+fn apply_records(result: &ApplyResult) -> Vec<BackendApplyRecord> {
+    result
+        .outcomes
+        .iter()
+        .filter_map(|(id, outcome)| {
+            let (status, message) = match outcome {
+                BackendOutcome::NotAttempted => return None,
+                BackendOutcome::Sent => (BackendApplyStatus::Sent, None),
+                BackendOutcome::Skipped(reason) => {
+                    (BackendApplyStatus::Skipped, Some(reason.clone()))
+                }
+                BackendOutcome::Failed { error, .. } => {
+                    (BackendApplyStatus::Failed, Some(error.clone()))
+                }
+            };
+            Some(BackendApplyRecord {
+                id: (*id).to_string(),
+                status,
+                message,
+            })
+        })
+        .collect()
 }
 
 fn next_sleep_after_tick(
@@ -175,11 +254,8 @@ async fn run_one_tick(
 
     let tick: anyhow::Result<Duration> = async {
         let app = config::load_config(cfg_path).context("load config")?;
-        let token = secret::get_token().await?.unwrap_or_default();
-        if token.trim().is_empty() {
-            errors.push("discord token missing (keyring or fallback file)".into());
-        }
-        let work = build_config(&app, &token).map_err(|e| anyhow::anyhow!(e))?;
+        let backends = load_backends(&mut errors).await?;
+        let work = build_config(&app).map_err(|e| anyhow::anyhow!(e))?;
         let raw = toml::to_string_pretty(&app).context("serialize config")?;
         *config_toml.write().await = raw;
 
@@ -202,12 +278,12 @@ async fn run_one_tick(
 
         let immediate = poke_gate.take_immediate();
         let target_online = !work_mode;
-        let token_fp = token_fingerprint(&token);
-        let plan = plan_apply(force, immediate, target_online, applied, token_fp);
+        forget_removed(applied, &backends);
+        let plan = plan_apply(force, immediate, target_online, applied, &backends);
         let should_apply = plan.any();
 
         let apply_result = if should_apply {
-            apply_presence(&work, work_mode, plan).await
+            apply_presence(&backends, work_mode, &plan).await
         } else {
             ApplyResult::not_attempted()
         };
@@ -222,18 +298,15 @@ async fn run_one_tick(
                 work_mode,
                 source: source.to_string(),
                 at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                discord_error: apply_result.discord.error(),
-                steam_error: apply_result.steam.error(),
+                backends: apply_records(&apply_result),
             };
             // Re-load and change only `last_apply`: an override set while the apply was
             // running must not be overwritten with the copy loaded at the start of the tick.
             state = update_state(state_path, |st| st.last_apply = Some(record))
                 .context("save state")?;
-            record_apply(applied, target_online, &apply_result, token_fp);
+            record_apply(applied, target_online, &apply_result, &backends);
         }
-        if let Some(msg) = discord_blocked_message(applied, token_fp) {
-            errors.push(msg);
-        }
+        errors.extend(blocked_messages(applied, &backends));
 
         let next = next_wake_time(now, &work, &hol, &state);
         let next_wake = Some(next.format("%Y-%m-%dT%H:%M:%S").to_string());
@@ -377,20 +450,50 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
 
-    const TOKEN: u64 = 1;
-    const OTHER_TOKEN: u64 = 2;
+    /// Any backend id works: the scheduler has no per-service code.
+    struct Dummy {
+        id: &'static str,
+        fp: u64,
+    }
 
-    fn applied(discord: Option<bool>, steam: Option<bool>) -> BackendApplied {
-        BackendApplied {
-            discord_online: discord,
-            steam_online: steam,
-            discord_rejected: None,
+    #[async_trait]
+    impl Backend for Dummy {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+        async fn apply(&self, _online: bool) -> BackendOutcome {
+            BackendOutcome::Sent
+        }
+        fn credential_fingerprint(&self) -> u64 {
+            self.fp
         }
     }
 
-    fn result(discord: BackendOutcome, steam: BackendOutcome) -> ApplyResult {
-        ApplyResult { discord, steam }
+    fn list(ids: &[(&'static str, u64)]) -> Vec<Box<dyn Backend>> {
+        ids.iter()
+            .map(|&(id, fp)| Box::new(Dummy { id, fp }) as Box<dyn Backend>)
+            .collect()
+    }
+
+    fn applied(entries: &[(&'static str, Option<bool>)]) -> BackendApplied {
+        entries
+            .iter()
+            .map(|&(id, online)| {
+                (
+                    id,
+                    BackendState {
+                        online,
+                        rejected: None,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn result(outcomes: Vec<(&'static str, BackendOutcome)>) -> ApplyResult {
+        ApplyResult { outcomes }
     }
 
     fn failed(permanent: bool) -> BackendOutcome {
@@ -400,109 +503,155 @@ mod tests {
         }
     }
 
+    const CRED: u64 = 1;
+    const OTHER_CRED: u64 = 2;
+
     #[test]
-    fn plan_applies_only_the_stale_backend() {
-        let a = applied(None, Some(false));
-        let plan = plan_apply(false, false, false, &a, TOKEN);
+    fn plan_applies_only_the_stale_backends() {
+        let b = list(&[("chat", CRED), ("games", 0), ("third", 0)]);
+        let a = applied(&[("games", Some(false))]);
+        let plan = plan_apply(false, false, false, &a, &b);
         assert_eq!(
-            plan,
-            ApplyPlan {
-                discord: true,
-                steam: false
-            },
-            "a Discord retry must not re-trigger Steam"
+            plan.ids,
+            vec!["chat", "third"],
+            "a retry of one backend must not re-trigger the others"
         );
     }
 
     #[test]
-    fn plan_is_empty_when_both_match() {
-        let a = applied(Some(false), Some(false));
-        assert!(!plan_apply(false, false, false, &a, TOKEN).any());
+    fn plan_is_empty_when_all_match() {
+        let b = list(&[("chat", CRED), ("games", 0)]);
+        let a = applied(&[("chat", Some(false)), ("games", Some(false))]);
+        assert!(!plan_apply(false, false, false, &a, &b).any());
     }
 
     #[test]
-    fn poke_applies_both() {
-        let a = applied(Some(false), Some(false));
-        let plan = plan_apply(false, true, false, &a, TOKEN);
-        assert!(plan.discord && plan.steam);
+    fn poke_and_force_apply_all() {
+        let b = list(&[("chat", CRED), ("games", 0)]);
+        let a = applied(&[("chat", Some(false)), ("games", Some(false))]);
+        assert_eq!(plan_apply(false, true, false, &a, &b).ids.len(), 2);
+        assert_eq!(plan_apply(true, false, false, &a, &b).ids.len(), 2);
     }
 
     #[test]
-    fn rejected_token_blocks_discord_until_token_changes() {
-        let mut a = applied(None, Some(false));
-        record_apply(
-            &mut a,
-            false,
-            &result(failed(true), BackendOutcome::NotAttempted),
-            TOKEN,
-        );
+    fn rejected_credential_blocks_backend_until_it_changes() {
+        let b = list(&[("chat", CRED), ("games", 0)]);
+        let mut a = applied(&[("games", Some(false))]);
+        record_apply(&mut a, false, &result(vec![("chat", failed(true))]), &b);
         for (force, immediate) in [(false, false), (false, true), (true, true)] {
             assert!(
-                !plan_apply(force, immediate, false, &a, TOKEN).discord,
+                !plan_apply(force, immediate, false, &a, &b).contains("chat"),
                 "blocked for force={force} immediate={immediate}"
             );
         }
-        assert!(discord_blocked_message(&a, TOKEN).is_some());
+        assert_eq!(blocked_messages(&a, &b).len(), 1);
 
-        assert!(plan_apply(false, false, false, &a, OTHER_TOKEN).discord);
-        assert!(discord_blocked_message(&a, OTHER_TOKEN).is_none());
+        let changed = list(&[("chat", OTHER_CRED), ("games", 0)]);
+        assert!(plan_apply(false, false, false, &a, &changed).contains("chat"));
+        assert!(blocked_messages(&a, &changed).is_empty());
 
         record_apply(
             &mut a,
             false,
-            &result(BackendOutcome::Sent, BackendOutcome::NotAttempted),
-            OTHER_TOKEN,
+            &result(vec![("chat", BackendOutcome::Sent)]),
+            &changed,
         );
-        assert!(a.discord_rejected.is_none());
-        assert_eq!(a.discord_online, Some(false));
+        assert_eq!(
+            a["chat"],
+            BackendState {
+                online: Some(false),
+                rejected: None
+            }
+        );
+    }
+
+    #[test]
+    fn blocked_message_names_the_credential() {
+        let b = list(&[(backend_table::DISCORD, CRED)]);
+        let mut a = BackendApplied::new();
+        record_apply(
+            &mut a,
+            false,
+            &result(vec![(backend_table::DISCORD, failed(true))]),
+            &b,
+        );
+        assert_eq!(
+            blocked_messages(&a, &b),
+            vec!["discord: err; not retried automatically until the Discord token is changed"]
+        );
     }
 
     #[test]
     fn transient_failure_leaves_backend_stale_and_retries() {
-        let mut a = applied(Some(true), Some(true));
-        let r = result(failed(false), BackendOutcome::Sent);
-        record_apply(&mut a, false, &r, TOKEN);
-        assert_eq!(a.discord_online, Some(true));
-        assert_eq!(a.steam_online, Some(false));
-        assert!(a.discord_rejected.is_none());
+        let b = list(&[("chat", CRED), ("games", 0)]);
+        let mut a = applied(&[("chat", Some(true)), ("games", Some(true))]);
+        let r = result(vec![
+            ("chat", failed(false)),
+            ("games", BackendOutcome::Sent),
+        ]);
+        record_apply(&mut a, false, &r, &b);
+        assert_eq!(a["chat"].online, Some(true));
+        assert_eq!(a["games"].online, Some(false));
+        assert!(a["chat"].rejected.is_none());
         assert!(r.needs_retry());
-        assert!(plan_apply(false, false, false, &a, TOKEN).discord);
+        assert_eq!(plan_apply(false, false, false, &a, &b).ids, vec!["chat"]);
     }
 
     #[test]
     fn skipped_and_permanent_outcomes_do_not_retry() {
-        let skipped = result(
-            BackendOutcome::Skipped("no discord token configured".into()),
-            BackendOutcome::Skipped("steam is not running".into()),
-        );
+        let skipped = result(vec![
+            ("chat", BackendOutcome::Skipped("no token".into())),
+            ("games", BackendOutcome::Skipped("not running".into())),
+        ]);
         assert!(!skipped.needs_retry());
         assert!(skipped.all_ok());
 
-        let rejected = result(failed(true), BackendOutcome::Sent);
+        let rejected = result(vec![
+            ("chat", failed(true)),
+            ("games", BackendOutcome::Sent),
+        ]);
         assert!(!rejected.needs_retry());
         assert!(!rejected.all_ok());
     }
 
     #[test]
-    fn steam_not_running_is_applied_again_later() {
-        let mut a = applied(Some(false), Some(false));
+    fn skipped_backend_is_applied_again_later() {
+        let b = list(&[("games", 0)]);
+        let mut a = applied(&[("games", Some(false))]);
         record_apply(
             &mut a,
             false,
-            &result(
-                BackendOutcome::NotAttempted,
-                BackendOutcome::Skipped("steam is not running".into()),
-            ),
-            TOKEN,
+            &result(vec![(
+                "games",
+                BackendOutcome::Skipped("not running".into()),
+            )]),
+            &b,
         );
-        assert_eq!(a.steam_online, None);
-        assert!(plan_apply(false, false, false, &a, TOKEN).steam);
+        assert_eq!(a["games"].online, None);
+        assert!(plan_apply(false, false, false, &a, &b).contains("games"));
     }
 
     #[test]
-    fn token_fingerprint_ignores_surrounding_whitespace() {
-        assert_eq!(token_fingerprint(" abc "), token_fingerprint("abc"));
-        assert_ne!(token_fingerprint("abc"), token_fingerprint("abd"));
+    fn removed_backend_is_forgotten() {
+        let mut a = applied(&[("chat", Some(false)), ("games", Some(false))]);
+        forget_removed(&mut a, &list(&[("games", 0)]));
+        assert!(!a.contains_key("chat"));
+        assert!(a.contains_key("games"));
+    }
+
+    #[test]
+    fn apply_records_list_attempted_backends() {
+        let r = result(vec![
+            ("chat", BackendOutcome::Sent),
+            ("games", BackendOutcome::Skipped("not running".into())),
+            ("third", failed(false)),
+            ("fourth", BackendOutcome::NotAttempted),
+        ]);
+        let recs = apply_records(&r);
+        assert_eq!(recs.len(), 3);
+        assert_eq!(recs[0].status, BackendApplyStatus::Sent);
+        assert_eq!(recs[1].message.as_deref(), Some("not running"));
+        assert_eq!(recs[2].status, BackendApplyStatus::Failed);
     }
 
     #[test]

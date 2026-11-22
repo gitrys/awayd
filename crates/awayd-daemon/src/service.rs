@@ -49,8 +49,8 @@ impl SchedulerApi for SchedulerService {
         self.config_toml.read().await.clone()
     }
 
-    async fn has_token(&self) -> bool {
-        match secret::get_token().await {
+    async fn has_credential(&self, id: &str) -> bool {
+        match secret::get_credential(id).await {
             Ok(Some(t)) => !t.trim().is_empty(),
             _ => false,
         }
@@ -152,31 +152,32 @@ impl SchedulerApi for SchedulerService {
         true
     }
 
-    async fn set_token(&self, token: &str) -> bool {
-        if token.trim().is_empty() {
+    async fn set_credential(&self, id: &str, value: &str) -> bool {
+        if value.trim().is_empty() {
             return false;
         }
-        let norm = crate::apply::discord::normalize_token(token);
-        match secret::set_token(&norm).await {
+        let norm = crate::apply::normalize_credential(id, value);
+        // `secret` rejects ids without a credential (unknown backends).
+        match secret::set_credential(id, &norm).await {
             Ok(()) => {
                 self.poke.poke_immediate();
                 true
             }
             Err(e) => {
-                tracing::warn!(target: "awayd::api", "SetToken: {e}");
+                tracing::warn!(target: "awayd::api", credential = id, "SetCredential: {e}");
                 false
             }
         }
     }
 
-    async fn clear_token(&self) -> bool {
-        match secret::clear_token().await {
+    async fn clear_credential(&self, id: &str) -> bool {
+        match secret::clear_credential(id).await {
             Ok(()) => {
                 self.poke.poke_immediate();
                 true
             }
             Err(e) => {
-                tracing::warn!(target: "awayd::api", "ClearToken: {e}");
+                tracing::warn!(target: "awayd::api", credential = id, "ClearCredential: {e}");
                 false
             }
         }
@@ -205,7 +206,7 @@ impl SchedulerApi for SchedulerService {
                 return false;
             }
         };
-        let work = match build_config(&app, "") {
+        let work = match build_config(&app) {
             Ok(w) => w,
             Err(e) => {
                 tracing::warn!(target: "awayd::api", "SetOverride build config: {e}");

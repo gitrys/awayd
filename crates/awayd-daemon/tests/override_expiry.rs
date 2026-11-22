@@ -16,7 +16,6 @@ impl HolidayLookup for FixedHoliday {
 
 fn weekday_sched() -> Config {
     Config {
-        discord_auth_token: String::new(),
         schedule: ScheduleConfig {
             country: "DE".into(),
             subdiv: "BW".into(),

@@ -19,10 +19,10 @@ get an answer as soon as possible; this is a spare-time project, so please allow
 
 - awayd changes your Discord status with your **Discord user token**. Anyone who has this token
   can act as your Discord account. Treat it like a password.
-- The token is stored in the **Windows Credential Manager** (service `awayd`).
+- The token is stored in the **Windows Credential Manager** (service `awayd`, user `discord`).
 - Only if storing it there fails, awayd falls back to a **plain-text file**
-  `state\discord_token.secret` next to the executables (portable mode) or under
-  `%APPDATA%\awayd\state\`. A warning is written to the log in that case.
+  `state\credentials\discord.secret` next to the executables (portable mode) or under
+  `%APPDATA%\awayd\state\credentials\`. A warning is written to the log in that case.
 - Without a token, awayd never contacts Discord.
 
 **Local control interface**

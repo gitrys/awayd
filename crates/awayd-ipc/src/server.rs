@@ -16,7 +16,8 @@ use crate::protocol::{decode_line, encode_line, JsonRpcRequest, JsonRpcResponse,
 pub trait SchedulerApi: Send + Sync {
     async fn status(&self) -> String;
     async fn get_config_toml(&self) -> String;
-    async fn has_token(&self) -> bool;
+    /// A credential is stored for backend `id`.
+    async fn has_credential(&self, id: &str) -> bool;
     async fn list_subdivisions(&self, country: &str) -> Vec<String>;
     fn list_available_countries(&self) -> Vec<(String, String)>;
     async fn holiday_data_status(&self, country: &str) -> (bool, i32, i32, String, String);
@@ -24,8 +25,9 @@ pub trait SchedulerApi: Send + Sync {
     async fn list_holidays(&self, country: &str, subdiv: &str, year: i32) -> Value;
     async fn set_config_toml(&self, toml: &str) -> bool;
     async fn reload_config(&self) -> bool;
-    async fn set_token(&self, token: &str) -> bool;
-    async fn clear_token(&self) -> bool;
+    /// Store the credential of backend `id`; false for unknown ids or empty values.
+    async fn set_credential(&self, id: &str, value: &str) -> bool;
+    async fn clear_credential(&self, id: &str) -> bool;
     async fn apply_now(&self) -> bool;
     async fn set_override(&self, mode: &str, ttl_seconds: u32) -> bool;
     async fn clear_override(&self) -> bool;
@@ -91,13 +93,18 @@ async fn handle_client(pipe: NamedPipeServer, api: Arc<dyn SchedulerApi>) -> Res
     Ok(())
 }
 
+/// String parameter `name`, empty when missing or not a string.
+fn str_param<'a>(req: &'a JsonRpcRequest, name: &str) -> &'a str {
+    req.params.get(name).and_then(|v| v.as_str()).unwrap_or("")
+}
+
 async fn dispatch(api: &Arc<dyn SchedulerApi>, req: &JsonRpcRequest) -> JsonRpcResponse {
     let id = req.id.clone();
     let result = match req.method.as_str() {
         "ping" => Ok(json!(true)),
         "status" => Ok(json!(api.status().await)),
         "get_config_toml" => Ok(json!(api.get_config_toml().await)),
-        "has_token" => Ok(json!(api.has_token().await)),
+        "has_credential" => Ok(json!(api.has_credential(str_param(req, "id")).await)),
         "list_subdivisions" => {
             let country = req
                 .params
@@ -147,15 +154,11 @@ async fn dispatch(api: &Arc<dyn SchedulerApi>, req: &JsonRpcRequest) -> JsonRpcR
             Ok(json!(api.set_config_toml(toml).await))
         }
         "reload_config" => Ok(json!(api.reload_config().await)),
-        "set_token" => {
-            let token = req
-                .params
-                .get("token")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            Ok(json!(api.set_token(token).await))
-        }
-        "clear_token" => Ok(json!(api.clear_token().await)),
+        "set_credential" => Ok(json!(
+            api.set_credential(str_param(req, "id"), str_param(req, "value"))
+                .await
+        )),
+        "clear_credential" => Ok(json!(api.clear_credential(str_param(req, "id")).await)),
         "apply_now" => Ok(json!(api.apply_now().await)),
         "set_override" => {
             let mode = req

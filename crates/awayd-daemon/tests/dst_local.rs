@@ -24,7 +24,6 @@ impl HolidayLookup for NoHolidays {
 
 fn cfg() -> Config {
     Config {
-        discord_auth_token: String::new(),
         schedule: ScheduleConfig {
             country: "DE".into(),
             subdiv: "BW".into(),

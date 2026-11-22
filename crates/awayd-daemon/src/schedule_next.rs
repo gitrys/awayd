@@ -97,7 +97,6 @@ mod tests {
 
     fn cfg_with_days(mut days: [DayWindow; 7]) -> Config {
         Config {
-            discord_auth_token: String::new(),
             schedule: ScheduleConfig {
                 country: "DE".into(),
                 subdiv: "BW".into(),

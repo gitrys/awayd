@@ -1,9 +1,12 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
-//! WMI push event when Discord.exe or steam.exe starts (re-apply presence).
+//! WMI push event when the program of a backend starts (e.g. Discord.exe, steam.exe), to
+//! re-apply presence.
 //!
-//! One WMI subscription for both names: event registrations count against a system-wide WMI
-//! quota. Steam is watched because the Steam backend is skipped while Steam is not running
-//! and must be applied once it starts.
+//! One WMI subscription for the process names of all backends in
+//! `awayd_core::backends::ALL`: event registrations count against a system-wide WMI quota, so
+//! the subscription is not rebuilt when backends are switched on or off; a tick applies only
+//! the active ones. Steam is watched because the Steam backend is skipped while Steam is not
+//! running and must be applied once it starts.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,12 +15,12 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use wmi::{COMLibrary, WMIConnection};
 
+use awayd_core::backends::all_process_names;
+
 use crate::watchers::PokeGate;
 
-const PROCESS_NAMES: &[&str] = &["Discord.exe", "steam.exe"];
-
 /// One Discord start spawns several `Discord.exe` processes within seconds; poke once.
-/// A poke re-applies both backends, so one window for all names is enough.
+/// A poke re-applies all backends, so one window for all names is enough.
 const COALESCE_WINDOW: Duration = Duration::from_secs(10);
 
 fn wql(process_names: &[&str]) -> String {
@@ -88,7 +91,7 @@ fn watch_loop(poke: Arc<PokeGate>, coalescer: &mut Coalescer) -> Result<(), Stri
     let com = COMLibrary::new().map_err(|e| e.to_string())?;
     let wmi = WMIConnection::new(com).map_err(|e| e.to_string())?;
     let stream = wmi
-        .raw_notification::<NewProcessEvent>(wql(PROCESS_NAMES))
+        .raw_notification::<NewProcessEvent>(wql(&all_process_names()))
         .map_err(|e| e.to_string())?;
     for event in stream {
         let event = event.map_err(|e| e.to_string())?;
@@ -117,9 +120,9 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
-    fn wql_watches_discord_and_steam() {
+    fn wql_watches_all_backend_processes() {
         assert_eq!(
-            wql(PROCESS_NAMES),
+            wql(&all_process_names()),
             "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process' \
              AND (TargetInstance.Name = 'Discord.exe' OR TargetInstance.Name = 'steam.exe')"
         );

@@ -66,8 +66,8 @@ impl SchedulerClient {
         Ok(v.as_str().context("config not string")?.to_string())
     }
 
-    pub async fn has_token(&mut self) -> Result<bool> {
-        let v = self.call("has_token", json!({})).await?;
+    pub async fn has_credential(&mut self, id: &str) -> Result<bool> {
+        let v = self.call("has_credential", json!({ "id": id })).await?;
         Ok(v.as_bool().unwrap_or(false))
     }
 
@@ -78,13 +78,15 @@ impl SchedulerClient {
         Ok(v.as_bool().unwrap_or(false))
     }
 
-    pub async fn set_token(&mut self, token: &str) -> Result<bool> {
-        let v = self.call("set_token", json!({ "token": token })).await?;
+    pub async fn set_credential(&mut self, id: &str, value: &str) -> Result<bool> {
+        let v = self
+            .call("set_credential", json!({ "id": id, "value": value }))
+            .await?;
         Ok(v.as_bool().unwrap_or(false))
     }
 
-    pub async fn clear_token(&mut self) -> Result<bool> {
-        let v = self.call("clear_token", json!({})).await?;
+    pub async fn clear_credential(&mut self, id: &str) -> Result<bool> {
+        let v = self.call("clear_credential", json!({ "id": id })).await?;
         Ok(v.as_bool().unwrap_or(false))
     }
 

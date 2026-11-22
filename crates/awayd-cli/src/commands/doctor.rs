@@ -5,7 +5,7 @@ use awayd_core::config::paths;
 use awayd_core::config::schema::DayWindow;
 use awayd_core::config::{self};
 use awayd_core::schedule::{schedule_days, DAY_LABELS};
-use awayd_core::status::StatusSnapshot;
+use awayd_core::status::{BackendApplyRecord, BackendApplyStatus, StatusSnapshot};
 use awayd_ipc::SchedulerClient;
 
 fn is_tty() -> bool {
@@ -40,6 +40,19 @@ fn print_schedule_days(days: &[DayWindow; 7]) {
     }
 }
 
+/// "sent", "skipped (steam is not running)", "failed (401 unauthorized)".
+fn backend_line(b: &BackendApplyRecord) -> String {
+    let status = match b.status {
+        BackendApplyStatus::Sent => "sent",
+        BackendApplyStatus::Skipped => "skipped",
+        BackendApplyStatus::Failed => "failed",
+    };
+    match &b.message {
+        Some(m) => format!("{status} ({m})"),
+        None => status.to_string(),
+    }
+}
+
 fn print_pretty_table(s: &StatusSnapshot) {
     let mode = if s.work_mode {
         "invisible (work)"
@@ -71,11 +84,8 @@ fn print_pretty_table(s: &StatusSnapshot) {
             "last_apply.ok:",
             if la.ok { "yes" } else { "no" }
         );
-        if let Some(ref e) = la.discord_error {
-            println!("  {:<16} {}", "discord_error:", e);
-        }
-        if let Some(ref e) = la.steam_error {
-            println!("  {:<16} {}", "steam_error:", e);
+        for b in &la.backends {
+            println!("  {:<16} {}", format!("{}:", b.id), backend_line(b));
         }
     }
     if !s.errors.is_empty() {

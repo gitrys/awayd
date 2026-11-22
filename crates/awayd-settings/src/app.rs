@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use awayd_core::autostart::{self, AutostartState};
+use awayd_core::backends::{self, BackendInfo};
 use awayd_core::config::paths;
 use awayd_core::config::schema::{AppConfig, VacationEntry};
 use awayd_core::StatusSnapshot;
@@ -23,13 +24,13 @@ use crate::widgets::weekday_schedule_grid::{show_weekday_schedule_grid, WeekdayS
 use crate::zoom_preview;
 use awayd_core::schedule::{normalize_schedule, schedule_days};
 
-const TOKEN_STORED_PLACEHOLDER: &str = "••••••••••••";
+const CREDENTIAL_STORED_PLACEHOLDER: &str = "••••••••••••";
 const STATUS_SLOT_H: f32 = 24.0;
 const TOAST_FADE_IN: f64 = 0.15;
 const TOAST_HOLD: f64 = 0.55;
 const TOAST_FADE_OUT: f64 = 0.25;
 const TOAST_GAP: f64 = 0.08;
-const TOKEN_DEBOUNCE_SECS: f64 = 0.8;
+const CREDENTIAL_DEBOUNCE_SECS: f64 = 0.8;
 const UI_PREFS_DEBOUNCE_SECS: f64 = 0.5;
 /// Ignore resize tracking until zoom/layout settle after startup.
 const WINDOW_TRACK_GRACE_SECS: f64 = 0.75;
@@ -58,9 +59,27 @@ struct StatusState {
     phase: Option<ToastPhase>,
 }
 
-struct TokenFieldEvent {
+struct CredentialFieldEvent {
     changed: bool,
     lost_focus: bool,
+}
+
+/// Input state of one backend credential (e.g. the Discord token).
+#[derive(Default)]
+struct CredentialField {
+    input: String,
+    /// The daemon reports a stored value.
+    stored: bool,
+    editing: bool,
+    /// Debounced save while typing.
+    save_at: Option<f64>,
+}
+
+/// Backends that need a credential, in table order.
+fn credential_backends() -> impl Iterator<Item = &'static BackendInfo> {
+    backends::ALL
+        .iter()
+        .filter(|b| b.credential_label.is_some())
 }
 
 struct VacationRangeUi {
@@ -79,9 +98,8 @@ pub struct AwaydSettingsApp {
     rt: tokio::runtime::Runtime,
     wizard: bool,
     wizard_step: u32,
-    token_input: String,
-    token_stored: bool,
-    token_editing: bool,
+    /// Per backend id (only backends with a credential).
+    credentials: HashMap<&'static str, CredentialField>,
     config: AppConfig,
     status: Option<StatusState>,
     frame_time: f64,
@@ -98,7 +116,6 @@ pub struct AwaydSettingsApp {
     vac_draft_end: String,
     vac_draft_range_state: DateRangeFieldState,
     daemon_ok: bool,
-    token_save_at: Option<f64>,
     ui_prefs: SettingsUiPrefs,
     ui_prefs_save_at: Option<f64>,
     zoom_applied: f32,
@@ -193,9 +210,9 @@ impl AwaydSettingsApp {
             rt,
             wizard: !paths::config_file().is_file(),
             wizard_step: 0,
-            token_input: String::new(),
-            token_stored: false,
-            token_editing: false,
+            credentials: credential_backends()
+                .map(|b| (b.id, CredentialField::default()))
+                .collect(),
             schedule_grid: WeekdayScheduleGridState::from_days(&schedule_days),
             config,
             status: None,
@@ -212,7 +229,6 @@ impl AwaydSettingsApp {
             vac_draft_end: String::new(),
             vac_draft_range_state: DateRangeFieldState::from_range("", ""),
             daemon_ok: false,
-            token_save_at: None,
             ui_prefs,
             ui_prefs_save_at: None,
             zoom_applied: zoom,
@@ -585,70 +601,113 @@ impl AwaydSettingsApp {
         }
     }
 
-    fn show_token_field(&mut self, ui: &mut egui::Ui, id: &str) -> TokenFieldEvent {
-        let mut event = TokenFieldEvent {
+    /// Password field for the credential of backend `id`. `widget_id` keeps wizard and
+    /// scheduler page fields apart.
+    fn show_credential_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &'static str,
+        widget_id: &str,
+    ) -> CredentialFieldEvent {
+        let mut event = CredentialFieldEvent {
             changed: false,
             lost_focus: false,
         };
-        if self.token_stored && !self.token_editing && self.token_input.is_empty() {
-            let mut display = TOKEN_STORED_PLACEHOLDER.to_string();
+        let field = self.credentials.entry(id).or_default();
+        let widget_id = ui.id().with(widget_id).with(id);
+        if field.stored && !field.editing && field.input.is_empty() {
+            let mut display = CREDENTIAL_STORED_PLACEHOLDER.to_string();
             let response = ui.add(
                 egui::TextEdit::singleline(&mut display)
-                    .id(ui.id().with(id))
+                    .id(widget_id)
                     .password(true)
                     .desired_width(280.0),
             );
             if response.gained_focus() {
-                self.token_editing = true;
-                self.token_input.clear();
+                field.editing = true;
+                field.input.clear();
             }
         } else {
             let response = ui.add(
-                egui::TextEdit::singleline(&mut self.token_input)
-                    .id(ui.id().with(id))
+                egui::TextEdit::singleline(&mut field.input)
+                    .id(widget_id)
                     .password(true)
                     .desired_width(280.0),
             );
             if response.gained_focus() {
-                self.token_editing = true;
+                field.editing = true;
             }
             event.changed = response.changed();
             event.lost_focus = response.lost_focus();
         }
-        if self.token_stored && !self.token_editing {
-            ui.label("Token saved in Credential Manager. Type a new value to replace.");
+        if field.stored && !field.editing {
+            ui.label("Saved in Credential Manager. Type a new value to replace.");
         }
         event
     }
 
-    fn schedule_token_save(&mut self) {
-        if self.token_input.trim().is_empty() {
-            self.token_save_at = None;
-            return;
-        }
-        self.token_save_at = Some(self.frame_time + TOKEN_DEBOUNCE_SECS);
-    }
-
-    fn flush_token_save(&mut self) {
-        self.token_save_at = None;
-        self.save_token();
-    }
-
-    fn tick_token_save(&mut self) {
-        let Some(at) = self.token_save_at else {
-            return;
-        };
-        if self.frame_time >= at && !self.token_input.trim().is_empty() {
-            self.flush_token_save();
+    /// Label and field for every backend that needs a credential.
+    fn credential_fields_ui(&mut self, ui: &mut egui::Ui, widget_id: &str, hint: &str) {
+        for b in credential_backends() {
+            let label = b.credential_label.unwrap_or("Credential");
+            ui.label(format!("{label} ({hint}):"));
+            let ev = self.show_credential_field(ui, b.id, widget_id);
+            self.handle_credential_event(b.id, ev);
         }
     }
 
-    fn handle_token_field_event(&mut self, event: TokenFieldEvent) {
+    fn credential_input_pending(&self, id: &str) -> bool {
+        self.credentials
+            .get(id)
+            .is_some_and(|f| !f.input.trim().is_empty())
+    }
+
+    fn schedule_credential_save(&mut self, id: &'static str) {
+        let at = self.frame_time + CREDENTIAL_DEBOUNCE_SECS;
+        if let Some(field) = self.credentials.get_mut(id) {
+            field.save_at = (!field.input.trim().is_empty()).then_some(at);
+        }
+    }
+
+    fn flush_credential_save(&mut self, id: &'static str) {
+        if let Some(field) = self.credentials.get_mut(id) {
+            field.save_at = None;
+        }
+        self.save_credential(id);
+    }
+
+    /// Save every field whose debounce time has passed.
+    fn tick_credential_saves(&mut self) {
+        let due: Vec<&'static str> = self
+            .credentials
+            .iter()
+            .filter(|(_, f)| f.save_at.is_some_and(|at| self.frame_time >= at))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in due {
+            if self.credential_input_pending(id) {
+                self.flush_credential_save(id);
+            } else if let Some(f) = self.credentials.get_mut(id) {
+                f.save_at = None;
+            }
+        }
+    }
+
+    /// Save all fields that still hold typed input (wizard "Next").
+    fn flush_pending_credentials(&mut self) {
+        for b in credential_backends() {
+            if self.credential_input_pending(b.id) {
+                self.flush_credential_save(b.id);
+            }
+        }
+    }
+
+    fn handle_credential_event(&mut self, id: &'static str, event: CredentialFieldEvent) {
         if event.changed {
-            self.schedule_token_save();
+            self.schedule_credential_save(id);
         }
-        if event.lost_focus && !self.token_input.trim().is_empty() {
-            self.flush_token_save();
+        if event.lost_focus && self.credential_input_pending(id) {
+            self.flush_credential_save(id);
         }
     }
 
@@ -952,7 +1011,13 @@ impl AwaydSettingsApp {
                     self.countries = list;
                 }
             }
-            self.token_stored = self.rt.block_on(self.ipc.has_token()).unwrap_or(false);
+            for b in credential_backends() {
+                let stored = self
+                    .rt
+                    .block_on(self.ipc.has_credential(b.id))
+                    .unwrap_or(false);
+                self.credentials.entry(b.id).or_default().stored = stored;
+            }
             self.reload_subdivs_for_country();
         } else if file_exists {
             self.reload_subdivs_for_country();
@@ -961,8 +1026,10 @@ impl AwaydSettingsApp {
         let days = schedule_days(&self.config.schedule);
         self.schedule_grid.sync_from_days(&days);
         self.sync_vacation_range_states();
-        if !self.token_editing {
-            self.token_input.clear();
+        for field in self.credentials.values_mut() {
+            if !field.editing {
+                field.input.clear();
+            }
         }
     }
 
@@ -1050,19 +1117,29 @@ impl AwaydSettingsApp {
         }
     }
 
-    fn save_token(&mut self) {
-        if self.token_input.trim().is_empty() {
+    fn save_credential(&mut self, id: &'static str) {
+        let Some(value) = self
+            .credentials
+            .get(id)
+            .map(|f| f.input.clone())
+            .filter(|v| !v.trim().is_empty())
+        else {
             return;
-        }
-        match self.rt.block_on(self.ipc.set_token(&self.token_input)) {
+        };
+        let label = backends::find(id)
+            .and_then(|b| b.credential_label)
+            .unwrap_or("credential");
+        match self.rt.block_on(self.ipc.set_credential(id, &value)) {
             Ok(true) => {
-                self.set_status_success("token saved");
-                self.token_input.clear();
-                self.token_editing = false;
-                self.token_stored = true;
+                self.set_status_success(format!("{label} saved"));
+                if let Some(field) = self.credentials.get_mut(id) {
+                    field.input.clear();
+                    field.editing = false;
+                    field.stored = true;
+                }
             }
-            Ok(false) => self.set_status_error("token rejected"),
-            Err(e) => self.set_status_error(format!("token error: {e}")),
+            Ok(false) => self.set_status_error(format!("{label} rejected")),
+            Err(e) => self.set_status_error(format!("{label} not saved: {e}")),
         }
     }
 }
@@ -1193,7 +1270,7 @@ impl eframe::App for AwaydSettingsApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
 
-        self.tick_token_save();
+        self.tick_credential_saves();
         self.tick_ui_prefs_save();
     }
 
@@ -1217,17 +1294,17 @@ impl AwaydSettingsApp {
                 }
             }
             1 => {
-                ui.label("Discord user token (stored in Credential Manager, not config.toml):");
-                let token_ev = self.show_token_field(ui, "wiz_token");
-                self.handle_token_field_event(token_ev);
+                self.credential_fields_ui(
+                    ui,
+                    "wiz_credential",
+                    "stored in Credential Manager, not config.toml",
+                );
                 ui.horizontal(|ui| {
                     if ui.button("Back").clicked() {
                         self.wizard_step = 0;
                     }
                     if ui.button("Next").clicked() {
-                        if !self.token_input.trim().is_empty() {
-                            self.flush_token_save();
-                        }
+                        self.flush_pending_credentials();
                         self.wizard_step = 2;
                     }
                 });
@@ -1291,9 +1368,7 @@ impl AwaydSettingsApp {
             schedule_changed = true;
         }
 
-        ui.label("Discord token (leave empty to keep existing):");
-        let token_ev = self.show_token_field(ui, "sched_token");
-        self.handle_token_field_event(token_ev);
+        self.credential_fields_ui(ui, "sched_credential", "leave empty to keep existing");
 
         ui.separator();
         if self.vacations_ui(ui) {

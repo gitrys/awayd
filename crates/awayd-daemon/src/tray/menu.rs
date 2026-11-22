@@ -179,10 +179,9 @@ fn format_apply_line(s: &StatusSnapshot) -> String {
 
     if let Some(la) = &s.last_apply {
         if !la.ok {
-            if let Some(ref e) = la.discord_error {
-                line.push_str(&format!(" — discord: {}", truncate_chars(e, 28)));
-            } else if let Some(ref e) = la.steam_error {
-                line.push_str(&format!(" — steam: {}", truncate_chars(e, 28)));
+            if let Some(f) = la.first_failure() {
+                let msg = f.message.as_deref().unwrap_or("failed");
+                line.push_str(&format!(" — {}: {}", f.id, truncate_chars(msg, 28)));
             }
         }
     }
@@ -235,7 +234,9 @@ pub fn handle_event(event: MenuEvent, service: Arc<SchedulerService>, rt: Handle
 #[cfg(test)]
 mod tests {
     use super::*;
-    use awayd_core::status::{LastApplyRecord, STATUS_SCHEMA_VERSION};
+    use awayd_core::status::{
+        BackendApplyRecord, BackendApplyStatus, LastApplyRecord, STATUS_SCHEMA_VERSION,
+    };
 
     fn snap(work_mode: bool, source: &str, next_wake: Option<&str>) -> StatusSnapshot {
         StatusSnapshot {
@@ -250,8 +251,7 @@ mod tests {
                 work_mode,
                 source: source.into(),
                 at: "2026-06-05T12:00:00".into(),
-                discord_error: None,
-                steam_error: None,
+                backends: vec![],
             }),
             errors: vec![],
             version: String::new(),
@@ -336,12 +336,22 @@ mod tests {
             work_mode: true,
             source: "schedule".into(),
             at: "2026-06-05T12:00:00".into(),
-            discord_error: Some("unauthorized".into()),
-            steam_error: None,
+            backends: vec![
+                BackendApplyRecord {
+                    id: "steam".into(),
+                    status: BackendApplyStatus::Sent,
+                    message: None,
+                },
+                BackendApplyRecord {
+                    id: "discord".into(),
+                    status: BackendApplyStatus::Failed,
+                    message: Some("unauthorized".into()),
+                },
+            ],
         });
-        s.errors = vec!["discord token missing (keyring or fallback file)".into()];
+        s.errors = vec!["Discord token missing (Credential Manager or fallback file)".into()];
         let (_, _, apply) = format_status_lines(&s, Local::now());
-        assert!(apply.contains("failed"));
-        assert!(apply.contains("discord token"));
+        assert!(apply.contains("failed — discord: unauthorized"), "{apply}");
+        assert!(apply.contains("Discord token"));
     }
 }

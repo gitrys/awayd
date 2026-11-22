@@ -78,7 +78,7 @@ With `portable.marker` next to the executables (the default for the portable fol
 | State (override, last apply) | `state\state.json` |
 | Logs (NDJSON, rotated) | `state\logs\awayd.log` |
 | Holiday data cache | `data\holidays\<COUNTRY>.json` |
-| Discord token | Windows Credential Manager, service `awayd`. Only if that fails: plain text in `state\discord_token.secret` |
+| Credentials (Discord token) | Windows Credential Manager, service `awayd`, user = service id (`discord`). Only if that fails: plain text in `state\credentials\<id>.secret` |
 
 Without `portable.marker` the same layout is used under `%APPDATA%\awayd`.
 

@@ -33,8 +33,7 @@ mod tests {
             work_mode: false,
             source: "schedule".into(),
             at: at.into(),
-            discord_error: None,
-            steam_error: None,
+            backends: vec![],
         }
     }
 

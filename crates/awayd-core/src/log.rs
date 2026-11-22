@@ -118,7 +118,8 @@ fn redact_patterns() -> &'static Vec<Regex> {
         vec![
             Regex::new(r"(?i)(authorization:\s*bearer\s+)(\S+)").unwrap(),
             Regex::new(r"(?i)(bearer\s+)(\S+)").unwrap(),
-            Regex::new(r"(?i)(discord_token\s*[=:]\s*)(\S+)").unwrap(),
+            // Credential keys of any backend (`discord_token=…`, `slack_credential: …`).
+            Regex::new(r"(?i)(\b\w+_(?:token|credential|secret)\s*[=:]\s*)(\S+)").unwrap(),
             Regex::new(r"(?i)(token\s*[=:]\s*)([A-Za-z0-9._\-]{20,})").unwrap(),
         ]
     })
@@ -179,6 +180,23 @@ mod tests {
         let s = "Authorization: Bearer abc.def.ghijklmnop";
         assert!(redact_message(s).contains("<redacted>"));
         assert!(!redact_message(s).contains("ghijklmnop"));
+    }
+
+    #[test]
+    fn redact_credential_keys_of_any_backend() {
+        for s in [
+            "discord_token=abc123",
+            "slack_credential: xyz",
+            "teams_secret = s3cr3t",
+        ] {
+            let r = redact_message(s);
+            assert!(r.ends_with("<redacted>"), "{s} -> {r}");
+        }
+        // Plain words are kept: status texts mention "token" without a value.
+        assert_eq!(
+            redact_message("Discord token missing"),
+            "Discord token missing"
+        );
     }
 
     #[test]

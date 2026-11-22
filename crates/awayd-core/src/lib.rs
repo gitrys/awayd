@@ -3,6 +3,7 @@
 
 pub mod atomic_fs;
 pub mod autostart;
+pub mod backends;
 pub mod config;
 pub mod launch;
 pub mod log;

@@ -22,12 +22,12 @@ impl Ipc {
         Ok(self.inner.set_config_toml(toml).await?)
     }
 
-    pub async fn has_token(&mut self) -> Result<bool> {
-        Ok(self.inner.has_token().await?)
+    pub async fn has_credential(&mut self, id: &str) -> Result<bool> {
+        Ok(self.inner.has_credential(id).await?)
     }
 
-    pub async fn set_token(&mut self, token: &str) -> Result<bool> {
-        Ok(self.inner.set_token(token).await?)
+    pub async fn set_credential(&mut self, id: &str, value: &str) -> Result<bool> {
+        Ok(self.inner.set_credential(id, value).await?)
     }
 
     pub async fn list_subdivisions(&mut self, country: &str) -> Result<Vec<String>> {

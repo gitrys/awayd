@@ -66,9 +66,8 @@ async fn unauthorized_is_permanent_and_sent_once() {
 /// Without a token Discord is skipped (no request, no retry).
 #[tokio::test]
 async fn missing_token_skips_discord_without_request() {
-    use awayd_core::schedule::default_week_days;
-    use awayd_daemon::apply::{apply_presence, ApplyPlan, BackendOutcome};
-    use awayd_daemon::work_window::{Config, ScheduleConfig};
+    use awayd_core::backends;
+    use awayd_daemon::apply::{apply_presence, build_backend, ApplyPlan, BackendOutcome};
 
     let _lock = discord_env_lock().lock().await;
 
@@ -80,28 +79,20 @@ async fn missing_token_skips_discord_without_request() {
         .await;
     std::env::set_var("AWAYD_DISCORD_API_URL", mock.uri());
 
-    let cfg = Config {
-        discord_auth_token: "  ".into(),
-        schedule: ScheduleConfig {
-            country: "DE".into(),
-            subdiv: "BW".into(),
-            days: default_week_days(),
-            vacation_ranges: vec![],
-        },
-    };
+    let discord = backends::find(backends::DISCORD).unwrap();
+    let list = vec![build_backend(discord, "  ".into())];
     let plan = ApplyPlan {
-        discord: true,
-        steam: false,
+        ids: vec![backends::DISCORD],
     };
-    let r = apply_presence(&cfg, false, plan).await;
+    let r = apply_presence(&list, false, &plan).await;
     std::env::remove_var("AWAYD_DISCORD_API_URL");
 
+    let discord_outcome = r.get(backends::DISCORD);
     assert!(
-        matches!(r.discord, BackendOutcome::Skipped(_)),
-        "{:?}",
-        r.discord
+        matches!(discord_outcome, BackendOutcome::Skipped(_)),
+        "{discord_outcome:?}"
     );
-    assert_eq!(r.steam, BackendOutcome::NotAttempted);
+    assert_eq!(r.get(backends::STEAM), &BackendOutcome::NotAttempted);
     assert!(!r.needs_retry());
     mock.verify().await;
 }

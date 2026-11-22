@@ -16,7 +16,6 @@ pub struct ScheduleConfig {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub discord_auth_token: String,
     pub schedule: ScheduleConfig,
 }
 

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Steam and Discord are now two implementations of one backend interface; the scheduler, the
+  status, the tray and `awayctl doctor` no longer contain service-specific code, so further
+  services can be added without touching them.
+- Status and `state.json` report the last apply per service (`last_apply.backends`: sent,
+  skipped or failed with message) instead of `discord_error` / `steam_error`. Files and status
+  replies written by 0.1.0 are still read.
+- Credentials are stored per service: Windows Credential Manager user `discord` (was
+  `discord-token`), fallback file `state\credentials\discord.secret` (was
+  `state\discord_token.secret`). **A Discord token saved with 0.1.0 is not taken over: enter it
+  again in the settings.**
+- The named-pipe methods `has_token` / `set_token` / `clear_token` are replaced by
+  `has_credential` / `set_credential` / `clear_credential` with a service id. Settings, tray and
+  `awayctl` of 0.1.0 cannot set a token with a newer daemon; always update all three programs.
+
 ## [0.1.0] - 2026-11-22
 
 First public release of awayd for Windows.
