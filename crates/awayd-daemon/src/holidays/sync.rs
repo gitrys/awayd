@@ -203,17 +203,21 @@ fn write_holiday_file(path: &Path, file: &HolidayFile) -> Result<(), String> {
 
 pub fn list_available_countries_cached_sync() -> Result<Vec<(String, String)>, String> {
     let cache = COUNTRIES_CACHE.get_or_init(|| Mutex::new(None));
-    let mut g = cache.lock().map_err(|e| e.to_string())?;
-    if let Some((t, ref list)) = *g {
-        if t.elapsed() < Duration::from_secs(24 * 3600) {
-            return Ok(list.clone());
+    {
+        let g = cache.lock().map_err(|e| e.to_string())?;
+        if let Some((t, ref list)) = *g {
+            if t.elapsed() < Duration::from_secs(24 * 3600) {
+                return Ok(list.clone());
+            }
         }
     }
+    // Download without holding the lock (up to 30 s timeout): other callers are not blocked
+    // meanwhile. Two parallel misses may both download; the later result simply wins.
     let list = super::nager::fetch_available_countries_blocking()?
         .into_iter()
         .map(|c| (c.country_code, c.name))
         .collect::<Vec<_>>();
-    *g = Some((Instant::now(), list.clone()));
+    *cache.lock().map_err(|e| e.to_string())? = Some((Instant::now(), list.clone()));
     Ok(list)
 }
 

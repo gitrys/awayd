@@ -171,6 +171,31 @@ fn version_mismatch_hint(daemon_version: Option<&str>) -> Option<String> {
     })
 }
 
+/// Next free vacation id `v<n>`: one above the highest number in use, so the id of a deleted
+/// entry is never given to another one (the id keys the entry's date pickers; duplicates
+/// shared their state, and daemon messages named an ambiguous entry).
+fn next_vacation_id(entries: &[VacationEntry]) -> String {
+    let next = entries
+        .iter()
+        .filter_map(|v| v.id.strip_prefix('v')?.parse::<u64>().ok())
+        .max()
+        .map_or(0, |n| n + 1);
+    format!("v{next}")
+}
+
+/// Give every entry whose id was already used by an earlier one a new unique id.
+/// Returns true when something changed.
+fn dedupe_vacation_ids(entries: &mut [VacationEntry]) -> bool {
+    let mut changed = false;
+    for i in 0..entries.len() {
+        if entries[..i].iter().any(|e| e.id == entries[i].id) {
+            entries[i].id = next_vacation_id(entries);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// The daemon executable next to this settings binary (same lookup as `awayctl`).
 fn awayd_exe() -> std::path::PathBuf {
     awayd_core::launch::resolve_awayd_binary("awayd")
@@ -883,6 +908,11 @@ impl AwaydSettingsApp {
             Ok(Some(c)) => {
                 self.config = c;
                 self.config_error = None;
+                // Configs saved before unique ids were given out may contain duplicates;
+                // the repaired ids are written with the next save.
+                if dedupe_vacation_ids(&mut self.config.schedule.vacations) {
+                    tracing::info!("duplicate vacation ids renumbered");
+                }
             }
             Ok(None) => self.config_error = None,
             Err(e) => self.config_error = Some(e),
@@ -1378,8 +1408,9 @@ impl AwaydSettingsApp {
             return false;
         }
         let index = self.config.schedule.vacations.len();
+        let id = next_vacation_id(&self.config.schedule.vacations);
         self.config.schedule.vacations.push(VacationEntry {
-            id: format!("v{index}"),
+            id,
             label: Self::resolve_vacation_label(&self.vac_draft_label, index),
             start: self.vac_draft_start.clone(),
             end: self.vac_draft_end.clone(),
@@ -1569,5 +1600,34 @@ mod tests {
     fn read_error_blocks_saving() {
         let r = resolve_loaded_config(true, Err("access denied".into()));
         assert_eq!(r.unwrap_err(), "access denied");
+    }
+
+    fn vac(id: &str) -> VacationEntry {
+        VacationEntry {
+            id: id.into(),
+            label: String::new(),
+            start: "2026-12-24".into(),
+            end: "2026-12-26".into(),
+            comment: String::new(),
+        }
+    }
+
+    #[test]
+    fn new_vacation_id_is_never_a_deleted_one() {
+        assert_eq!(next_vacation_id(&[]), "v0");
+        // v0, v1, v2 created, v1 deleted: the next one must not be v2 again.
+        let left = [vac("v0"), vac("v2")];
+        assert_eq!(next_vacation_id(&left), "v3");
+        // Ids not in the v<n> form (hand-written) are ignored for the numbering.
+        assert_eq!(next_vacation_id(&[vac("summer")]), "v0");
+    }
+
+    #[test]
+    fn duplicate_vacation_ids_are_renumbered() {
+        let mut list = vec![vac("v0"), vac("v2"), vac("v2"), vac("v0")];
+        assert!(dedupe_vacation_ids(&mut list));
+        let ids: Vec<&str> = list.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["v0", "v2", "v3", "v4"]);
+        assert!(!dedupe_vacation_ids(&mut list), "nothing left to repair");
     }
 }

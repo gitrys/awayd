@@ -71,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and rejects requests over 1 MiB.
 - An unreadable `state.json` or one with another schema version no longer makes every status
   update fail: it is moved aside as `state.json.<time>.bak` and a fresh state is used.
+- Vacations get unique ids: after deleting one, a new vacation no longer reuses an id still in
+  use (date pickers of two entries shared their state). Duplicate ids in existing configs are
+  renumbered when the settings load them.
+- `awayctl override --ttl 1h30` is rejected with a hint (`1h30m`) instead of meaning 1 h 30 s.
+- The country list for the settings is downloaded without blocking other requests for it.
 
 ### Changed
 
