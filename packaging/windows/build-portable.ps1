@@ -113,6 +113,11 @@ if (-not $Release) {
     return
 }
 
+# cargo-about resolves metadata for all platforms and needs every crate of Cargo.lock in the
+# local cache (also non-Windows ones); fetch them first, then let it run offline (--frozen).
+cargo fetch --locked
+Assert-NativeSuccess "cargo fetch"
+
 # Third-party license notices (fails on licenses not accepted in about.toml).
 cargo about generate --frozen --fail about.hbs -o (Join-Path $Dist "THIRD_PARTY_LICENSES.html")
 Assert-NativeSuccess "cargo about generate"
