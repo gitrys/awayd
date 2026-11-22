@@ -822,13 +822,13 @@ impl SdssSettingsApp {
 
     fn reload(&mut self) {
         self.daemon_ok = self.rt.block_on(self.ipc.ping());
+        // Always read config.toml from disk: the daemon's copy is only refreshed by a
+        // successful tick, so after a manual edit it can still hold the old valid config and
+        // an unreadable file would go unnoticed (and be overwritten on the next save).
         let file_exists = paths::config_file().is_file();
+        let text = std::fs::read_to_string(paths::config_file()).map_err(|e| e.to_string());
+        self.apply_loaded_config(resolve_loaded_config(file_exists, text));
         if self.daemon_ok {
-            let text = self
-                .rt
-                .block_on(self.ipc.get_config_toml())
-                .map_err(|e| format!("daemon did not return the config: {e:#}"));
-            self.apply_loaded_config(resolve_loaded_config(file_exists, text));
             if let Ok(list) = self.rt.block_on(self.ipc.list_countries()) {
                 if !list.is_empty() {
                     self.countries = list;
@@ -837,11 +837,7 @@ impl SdssSettingsApp {
             self.token_stored = self.rt.block_on(self.ipc.has_token()).unwrap_or(false);
             self.reload_subdivs_for_country();
         } else if file_exists {
-            let text = std::fs::read_to_string(paths::config_file()).map_err(|e| e.to_string());
-            self.apply_loaded_config(resolve_loaded_config(file_exists, text));
             self.reload_subdivs_for_country();
-        } else {
-            self.config_error = None;
         }
         self.remember_subdiv();
         let days = schedule_days(&self.config.schedule);

@@ -18,10 +18,6 @@ impl Ipc {
         self.inner.ping().await.unwrap_or(false)
     }
 
-    pub async fn get_config_toml(&mut self) -> Result<String> {
-        self.inner.get_config_toml().await
-    }
-
     pub async fn set_config_toml(&mut self, toml: &str) -> Result<bool> {
         Ok(self.inner.set_config_toml(toml).await?)
     }
