@@ -103,3 +103,14 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 - **Tray reacts without polling:** status change (override from the tray, or a schedule change)
   → icon and tooltip update at once; tray menu opens and its actions work; while the menu is
   open a status change is shown at the latest when the menu closes.
+
+## 2026-11-22 – Plan U1 (lifecycle, IPC)
+
+- **Wake-up / time change:** sleep and wake the PC (also by wake timer without input) → log
+  `awayd::power resume (automatic)` (and `resume (user)` after input), one re-apply. Change the
+  time zone in Windows settings → `system time changed` (if Windows sends it) or a re-apply
+  within 15 minutes at the latest.
+- **Second user:** with fast user switching, start awayd in a second Windows account → both run
+  with their own tray; settings of each account talk to their own daemon.
+- **Broken state.json:** stop awayd, write `{` into `state\state.json`, start → log warning
+  "state.json unreadable … moved aside", `state.json.<time>.bak` exists, status works.

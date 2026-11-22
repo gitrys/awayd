@@ -29,9 +29,11 @@ get an answer as soon as possible; this is a spare-time project, so please allow
 **Local control interface**
 
 - The settings window, the tray and `awayctl` talk to the daemon over the named pipe
-  `\\.\pipe\awayd`. It uses the default Windows security for named pipes (no custom access
-  list). Programs running **under your Windows account** can therefore connect and change the
-  configuration, the override and the stored Discord token.
+  `\\.\pipe\awayd-<session id>` (one per Windows session). It uses the default Windows
+  security for named pipes (no custom access list). Programs running **under your Windows
+  account** can therefore connect and change the configuration, the override and the stored
+  Discord token. Requests are limited to 1 MiB per line; malformed requests are answered with
+  an error.
 
 **Network access**
 

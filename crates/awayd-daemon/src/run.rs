@@ -83,6 +83,9 @@ pub async fn run_backend(handle: AgentHandle) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         while power_rx.recv().is_ok() {
             std::thread::sleep(std::time::Duration::from_secs(RESUME_SETTLE_SECS));
+            // One wake-up usually brings several signals ("automatic", then "user"): they
+            // arrived during the settle time and need no extra re-apply.
+            while power_rx.try_recv().is_ok() {}
             poke_resume.poke_immediate();
         }
     });

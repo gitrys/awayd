@@ -3,7 +3,30 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PIPE_NAME: &str = r"\\.\pipe\awayd";
+/// Named pipe of the awayd daemon in this Windows session: `\\.\pipe\awayd-<session id>`.
+///
+/// Pipe names are machine-wide; the session id keeps the daemons of several logged-in users
+/// (fast user switching, Remote Desktop) apart. Daemon, settings and `awayctl` of one session
+/// compute the same name.
+pub fn pipe_name() -> String {
+    pipe_name_for(current_session_id())
+}
+
+fn pipe_name_for(session: u32) -> String {
+    format!(r"\\.\pipe\awayd-{session}")
+}
+
+fn current_session_id() -> u32 {
+    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    let mut session = 0u32;
+    // SAFETY: plain Win32 call with a valid out pointer. On failure session 0 is used (the
+    // services session), which still gives one consistent name for all awayd programs.
+    unsafe {
+        let _ = ProcessIdToSessionId(GetCurrentProcessId(), &mut session);
+    }
+    session
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -74,4 +97,17 @@ pub fn encode_line(value: &impl Serialize) -> anyhow::Result<Vec<u8>> {
 pub fn decode_line(line: &[u8]) -> anyhow::Result<Value> {
     let v: Value = serde_json::from_slice(line)?;
     Ok(v)
+}
+
+#[cfg(test)]
+mod pipe_tests {
+    use super::*;
+
+    #[test]
+    fn pipe_name_contains_the_session() {
+        assert_eq!(pipe_name_for(3), r"\\.\pipe\awayd-3");
+        // Same name for every caller in this process/session.
+        assert_eq!(pipe_name(), pipe_name());
+        assert!(pipe_name().starts_with(r"\\.\pipe\awayd-"));
+    }
 }

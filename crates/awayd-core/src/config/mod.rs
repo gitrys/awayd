@@ -84,19 +84,45 @@ pub fn save_config(path: &Path, cfg: &AppConfig) -> Result<()> {
     Ok(())
 }
 
+/// Load `state.json`. It only holds runtime data (override, last apply): when it cannot be
+/// parsed or has another schema version (e.g. written by a newer awayd), it is moved aside as
+/// `state.json.<time>.bak` and a fresh state is used. Before, every tick failed until the file
+/// was removed by hand. A file that cannot be read at all (locked, no access) stays an error.
 pub fn load_state(path: &Path) -> Result<AppState> {
     if !path.is_file() {
         return Ok(AppState::default());
     }
     let raw = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
-    let st: AppState = serde_json::from_str(&raw).with_context(|| "parse state.json")?;
+    match parse_state(&raw) {
+        Ok(st) => Ok(st),
+        Err(reason) => {
+            let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "state.json".into());
+            let backup = path.with_file_name(format!("{file_name}.{stamp}.bak"));
+            std::fs::rename(path, &backup)
+                .with_context(|| format!("move unusable {} aside", path.display()))?;
+            tracing::warn!(
+                target: "awayd::state",
+                backup = %backup.display(),
+                "{reason}; moved aside, starting with a fresh state"
+            );
+            Ok(AppState::default())
+        }
+    }
+}
+
+fn parse_state(raw: &str) -> std::result::Result<AppState, String> {
+    let st: AppState =
+        serde_json::from_str(raw).map_err(|e| format!("state.json unreadable: {e}"))?;
     if st.schema_version != state::STATE_SCHEMA_VERSION {
-        anyhow::bail!(
-            "unsupported state schema_version {} (expected {}); delete or migrate {:?}",
+        return Err(format!(
+            "state.json has schema_version {} (expected {})",
             st.schema_version,
-            state::STATE_SCHEMA_VERSION,
-            path
-        );
+            state::STATE_SCHEMA_VERSION
+        ));
     }
     Ok(st)
 }
@@ -200,5 +226,39 @@ mod tests {
             err.contains("discrod") && err.contains("discord, steam"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn unusable_state_is_moved_aside_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        for content in [
+            "{ not json",
+            r#"{"schema_version": 99}"#, // e.g. written by a newer awayd
+        ] {
+            std::fs::write(&path, content).unwrap();
+            let st = load_state(&path).expect("fresh state instead of an error");
+            assert_eq!(st.schema_version, state::STATE_SCHEMA_VERSION);
+            assert!(!path.exists(), "unusable file moved away");
+            let backups: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".bak"))
+                .collect();
+            assert!(!backups.is_empty());
+            for b in backups {
+                assert_eq!(std::fs::read_to_string(b.path()).unwrap(), content);
+                std::fs::remove_file(b.path()).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn valid_state_is_loaded_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        save_state(&path, &AppState::default()).unwrap();
+        load_state(&path).unwrap();
+        assert!(path.exists());
     }
 }

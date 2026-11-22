@@ -9,7 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::ClientOptions;
 use tokio::time::timeout;
 
-use crate::protocol::{decode_line, encode_line, JsonRpcRequest, JsonRpcResponse, PIPE_NAME};
+use crate::protocol::{decode_line, encode_line, pipe_name, JsonRpcRequest, JsonRpcResponse};
 
 pub struct SchedulerClient {
     next_id: u64,
@@ -38,7 +38,7 @@ impl SchedulerClient {
     }
 
     async fn roundtrip(&self, req: &JsonRpcRequest) -> Result<JsonRpcResponse> {
-        let client = ClientOptions::new().open(PIPE_NAME)?;
+        let client = ClientOptions::new().open(pipe_name())?;
         timeout(Duration::from_secs(30), async {
             let (reader, mut writer) = tokio::io::split(client);
             writer.write_all(&encode_line(req)?).await?;

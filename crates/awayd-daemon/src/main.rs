@@ -72,7 +72,9 @@ fn main() {
 }
 
 fn acquire_single_instance() -> bool {
-    let name: Vec<u16> = "Global\\awayd\0".encode_utf16().collect();
+    // Per Windows session (`Local\`), like the pipe name: another logged-in user gets their
+    // own awayd instead of none.
+    let name: Vec<u16> = "Local\\awayd\0".encode_utf16().collect();
     unsafe {
         let mutex: HANDLE =
             CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr())).unwrap_or_default();

@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tracing::warn;
 
-use crate::protocol::{decode_line, encode_line, JsonRpcRequest, JsonRpcResponse, PIPE_NAME};
+use crate::protocol::{decode_line, encode_line, pipe_name, JsonRpcRequest, JsonRpcResponse};
 
 /// Trait implemented by the resident scheduler service.
 #[async_trait::async_trait]
@@ -75,27 +75,60 @@ fn create_pipe() -> Result<NamedPipeServer> {
     let first = FIRST_PIPE.swap(false, Ordering::SeqCst);
     Ok(ServerOptions::new()
         .first_pipe_instance(first)
-        .create(PIPE_NAME)?)
+        .create(pipe_name())?)
 }
 
+/// Longest accepted request line: a local process must not make the daemon buffer unbounded
+/// data (largest real request: `set_config_toml` with a config of a few KB).
+const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
 async fn handle_client(pipe: NamedPipeServer, api: Arc<dyn SchedulerApi>) -> Result<()> {
-    let (reader, mut writer) = tokio::io::split(pipe);
-    let mut lines = BufReader::new(reader).lines();
-    while let Some(line) = lines.next_line().await? {
-        let v = decode_line(line.as_bytes())?;
-        let req: JsonRpcRequest = match serde_json::from_value(v) {
-            Ok(r) => r,
-            Err(e) => {
-                let resp = JsonRpcResponse::err(Value::Null, -32700, format!("parse error: {e}"));
-                writer.write_all(&encode_line(&resp)?).await?;
-                continue;
-            }
+    let (reader, writer) = tokio::io::split(pipe);
+    serve_lines(reader, writer, api.as_ref()).await
+}
+
+/// One JSON-RPC request per line. Invalid JSON gets a `-32700` reply and the session goes on;
+/// a line over [`MAX_REQUEST_BYTES`] gets `-32600` and ends the session (the next request
+/// boundary cannot be found reliably).
+async fn serve_lines<R, W>(reader: R, mut writer: W, api: &dyn SchedulerApi) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut reader = BufReader::new(reader);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        let n = (&mut reader)
+            .take(MAX_REQUEST_BYTES as u64 + 1)
+            .read_until(b'\n', &mut buf)
+            .await?;
+        if n == 0 {
+            return Ok(());
+        }
+        if buf.len() > MAX_REQUEST_BYTES {
+            let resp = JsonRpcResponse::err(
+                Value::Null,
+                -32600,
+                format!("request larger than {MAX_REQUEST_BYTES} bytes"),
+            );
+            writer.write_all(&encode_line(&resp)?).await?;
+            writer.flush().await?;
+            return Ok(());
+        }
+        let line = buf.trim_ascii();
+        if line.is_empty() {
+            continue;
+        }
+        let parsed = decode_line(line)
+            .and_then(|v| serde_json::from_value::<JsonRpcRequest>(v).map_err(Into::into));
+        let resp = match parsed {
+            Ok(req) => dispatch(api, &req).await,
+            Err(e) => JsonRpcResponse::err(Value::Null, -32700, format!("parse error: {e}")),
         };
-        let resp = dispatch(&api, &req).await;
         writer.write_all(&encode_line(&resp)?).await?;
         writer.flush().await?;
     }
-    Ok(())
 }
 
 /// String parameter `name`, empty when missing or not a string.
@@ -103,7 +136,7 @@ fn str_param<'a>(req: &'a JsonRpcRequest, name: &str) -> &'a str {
     req.params.get(name).and_then(|v| v.as_str()).unwrap_or("")
 }
 
-async fn dispatch(api: &Arc<dyn SchedulerApi>, req: &JsonRpcRequest) -> JsonRpcResponse {
+async fn dispatch(api: &dyn SchedulerApi, req: &JsonRpcRequest) -> JsonRpcResponse {
     let id = req.id.clone();
     let result = match req.method.as_str() {
         "ping" => Ok(json!(true)),
@@ -189,5 +222,102 @@ async fn dispatch(api: &Arc<dyn SchedulerApi>, req: &JsonRpcRequest) -> JsonRpcR
     match result {
         Ok(v) => JsonRpcResponse::ok(id, v),
         Err(e) => JsonRpcResponse::err(id, -32601, e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncBufReadExt;
+
+    /// Answers `status` with "ok"; nothing else is called in these tests.
+    struct Fake;
+
+    #[async_trait::async_trait]
+    impl SchedulerApi for Fake {
+        async fn status(&self) -> String {
+            "ok".into()
+        }
+        async fn get_config_toml(&self) -> String {
+            unreachable!()
+        }
+        async fn has_credential(&self, _: &str) -> bool {
+            unreachable!()
+        }
+        async fn list_subdivisions(&self, _: &str) -> Vec<String> {
+            unreachable!()
+        }
+        async fn list_available_countries(&self) -> Vec<(String, String)> {
+            unreachable!()
+        }
+        async fn holiday_data_status(&self, _: &str) -> (bool, i32, i32, String, String) {
+            unreachable!()
+        }
+        async fn refresh_holiday_data(&self, _: &str) -> String {
+            unreachable!()
+        }
+        async fn list_holidays(&self, _: &str, _: &str, _: i32) -> Value {
+            unreachable!()
+        }
+        async fn set_config_toml(&self, _: &str) -> bool {
+            unreachable!()
+        }
+        async fn reload_config(&self) -> bool {
+            unreachable!()
+        }
+        async fn set_credential(&self, _: &str, _: &str) -> bool {
+            unreachable!()
+        }
+        async fn clear_credential(&self, _: &str) -> bool {
+            unreachable!()
+        }
+        async fn apply_now(&self) -> bool {
+            unreachable!()
+        }
+        async fn set_override(&self, _: &str, _: u32) -> bool {
+            unreachable!()
+        }
+        async fn clear_override(&self) -> bool {
+            unreachable!()
+        }
+        fn quit(&self) {}
+    }
+
+    /// Send `input`, close the write side, return the reply lines.
+    async fn session(input: Vec<u8>) -> Vec<Value> {
+        let (client, server) = tokio::io::duplex(4 * MAX_REQUEST_BYTES);
+        let (server_r, server_w) = tokio::io::split(server);
+        let serve = tokio::spawn(async move { serve_lines(server_r, server_w, &Fake).await });
+        let (client_r, mut client_w) = tokio::io::split(client);
+        client_w.write_all(&input).await.unwrap();
+        client_w.shutdown().await.unwrap();
+        serve.await.unwrap().unwrap();
+        let mut lines = BufReader::new(client_r).lines();
+        let mut out = Vec::new();
+        while let Some(l) = lines.next_line().await.unwrap() {
+            out.push(serde_json::from_str(&l).unwrap());
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn invalid_json_is_answered_and_the_session_goes_on() {
+        let input = b"this is not json\n{\"jsonrpc\":\"2.0\",\"method\":\"status\",\"params\":{},\"id\":7}\n";
+        let replies = session(input.to_vec()).await;
+        assert_eq!(replies.len(), 2, "{replies:?}");
+        assert_eq!(replies[0]["error"]["code"], -32700);
+        assert_eq!(replies[1]["result"], "ok");
+        assert_eq!(replies[1]["id"], 7);
+    }
+
+    #[tokio::test]
+    async fn oversized_request_is_rejected_and_ends_the_session() {
+        let mut input = vec![b'x'; MAX_REQUEST_BYTES + 10];
+        input.extend_from_slice(
+            b"\n{\"jsonrpc\":\"2.0\",\"method\":\"status\",\"params\":{},\"id\":1}\n",
+        );
+        let replies = session(input).await;
+        assert_eq!(replies.len(), 1, "{replies:?}");
+        assert_eq!(replies[0]["error"]["code"], -32600);
     }
 }

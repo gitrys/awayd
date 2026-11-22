@@ -82,7 +82,7 @@ More details: [docs/install-windows.md](docs/install-windows.md).
 | `awayctl.exe` | `awayd-cli` | CLI: `doctor`, `logs`, `override`, `validate`, `holidays`, autostart |
 
 Shared libraries: `awayd-core` (config, schedule logic) and `awayd-ipc` (JSON-RPC over the named
-pipe `\\.\pipe\awayd`).
+pipe `\\.\pipe\awayd-<session id>`; one awayd per Windows session).
 
 ## Where data is stored
 

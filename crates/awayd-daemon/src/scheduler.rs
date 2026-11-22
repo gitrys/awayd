@@ -51,6 +51,16 @@ type BackendApplied = HashMap<&'static str, BackendState>;
 const APPLY_RETRY_INITIAL: Duration = Duration::from_secs(30);
 const APPLY_RETRY_MAX: Duration = Duration::from_secs(120);
 
+/// Longest sleep between two ticks. The wake time is computed from the wall clock, but the
+/// sleep runs on a monotonic clock: after a change of system time or time zone, or a wake-up
+/// Windows did not announce, the next tick recomputes it within this time. A tick without
+/// change applies nothing.
+const MAX_TICK_SLEEP: Duration = Duration::from_secs(15 * 60);
+
+fn bounded_sleep(until_next_change: Duration) -> Duration {
+    until_next_change.clamp(Duration::from_secs(1), MAX_TICK_SLEEP)
+}
+
 /// Services switched on in `app`, in table order.
 fn enabled_backends(app: &AppConfig) -> impl Iterator<Item = &'static BackendInfo> + '_ {
     backend_table::ALL
@@ -426,7 +436,7 @@ async fn run_one_tick(
         let dur = (next - Local::now())
             .to_std()
             .unwrap_or(Duration::from_secs(60));
-        let schedule_sleep = dur.clamp(Duration::from_secs(1), Duration::from_secs(86400 * 7));
+        let schedule_sleep = bounded_sleep(dur);
         let mut sleep = next_sleep_after_tick(schedule_sleep, partial_failure, retry_backoff);
         if partial_failure && sleep < schedule_sleep {
             tracing::warn!(
@@ -869,5 +879,19 @@ mod tests {
         token.cancel();
         let seen = tokio::time::timeout(Duration::from_secs(1), token.cancelled()).await;
         assert!(seen.is_ok());
+    }
+
+    #[test]
+    fn sleep_is_bounded_so_clock_changes_are_picked_up() {
+        assert_eq!(
+            bounded_sleep(Duration::from_secs(86_400)),
+            MAX_TICK_SLEEP,
+            "a change tomorrow still wakes within 15 minutes"
+        );
+        assert_eq!(
+            bounded_sleep(Duration::from_secs(120)),
+            Duration::from_secs(120)
+        );
+        assert_eq!(bounded_sleep(Duration::ZERO), Duration::from_secs(1));
     }
 }

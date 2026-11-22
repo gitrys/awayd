@@ -21,6 +21,8 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "sync", "time", "io-util", "net"] }
 # CancellationToken (stateful shutdown signal)
 tokio-util = { version = "0.7", default-features = false }
+# Win32 API (daemon: tray, power, processes; ipc: session id for the pipe name)
+windows = "0.58"
 winreg = "0.52"
 winresource = "0.1"
 

@@ -61,6 +61,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes (fewer CPU wake-ups, relevant for laptop battery life).
 - Build without compiler warnings (unused widgets and the unused `image` / `thiserror`
   dependencies removed); CI now treats warnings as errors in the MSRV check.
+- The status is re-applied after any wake-up from standby (also automatic ones without user
+  input) and after a change of system time or time zone; in addition awayd recomputes at least
+  every 15 minutes, so a missed event is corrected within that time.
+- One awayd per Windows session: with several logged-in users each gets their own (single
+  instance per session, named pipe `\\.\pipe\awayd-<session id>`). Programs of different
+  builds must be updated together.
+- The named pipe answers malformed requests with an error instead of closing the connection
+  and rejects requests over 1 MiB.
+- An unreadable `state.json` or one with another schema version no longer makes every status
+  update fail: it is moved aside as `state.json.<time>.bak` and a fresh state is used.
 
 ### Changed
 
