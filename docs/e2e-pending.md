@@ -4,9 +4,9 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 
 ## 2026-11-22 – Fix plan 1
 
-- **Discord start re-apply (#76):** start Discord while `awayd` runs → log shows one
-  `Discord.exe started` (not six), the planned status is re-applied. Open question: does Discord
-  overwrite the status again a few seconds after login (would need a delay)?
+- **Discord start re-apply (#76), open question:** with a Discord token stored, does Discord
+  overwrite the status again a few seconds after login (would need a delay)? (One
+  `Discord.exe started` and one re-apply per Discord start: verified 2026-11-22.)
 - **Unreadable config (#33):** break `config.toml` (syntax error, `schema_version = 2`), open
   `awayd-settings` with daemon online and offline → notice shown, edits are not saved, the file is
   unchanged; "Reload" after fixing the file clears the notice; "Back up and start over" writes a
@@ -34,7 +34,6 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   (`permanent=true`), status shows "not retried automatically until the token is changed", no
   further Discord requests every 30–120 s, Steam is not re-triggered. Set a valid token → Discord
   is applied again. Remove the token → Discord `presence skipped`, no retries.
-- **Program starts (process watcher without WMI, see "Plan W" below).**
 
 ## 2026-11-22 – Fix plan 3 (autostart toggle, tray error state, build script)
 
@@ -95,15 +94,6 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   next_wake / tray). Same with `subdiv = ""` ("no region set for DE").
 - **Holiday downloads:** Settings → "Refresh holiday data" and the country list still work;
   while a refresh runs, the tray and `awayctl doctor` stay responsive.
-- **Logs:** new lines have `ts` with offset (`+01:00`); the settings log view still shows only
-  the time. Set `[advanced] log_min_level = "warn"` and save in the settings (or Reload) → log
-  line "log capture level applied", no more INFO lines afterwards; back to "debug".
-
-## 2026-11-22 – Plan W (process watcher without WMI)
-
-- **Re-apply on program start:** with awayd running, start Steam (and, with Discord on, Discord)
-  → within about 2 s the log shows `steam.exe started` / `Discord.exe started` (target
-  `awayd::process_watch`) and a re-apply (`presence sent`). Discord's several processes cause
-  only one re-apply.
-- **No WMI warnings:** `awayctl logs --grep wmi` shows no new lines; also with Logitech G HUB
-  running and many processes open (the case that broke the WMI watcher).
+- **Log level at runtime:** set `[advanced] log_min_level = "warn"` and save in the settings (or
+  Reload) → log line "log capture level applied", no more INFO lines afterwards; back to
+  "debug". (Timestamps with offset and the short time in the log view: verified 2026-11-22.)
