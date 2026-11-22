@@ -255,20 +255,63 @@ pub fn holiday_data_status(country: &str) -> HolidayDataStatus {
     }
 }
 
-/// Background loop: sync config country, recheck weekly.
-pub async fn background_task() {
+const SYNC_INTERVAL_OK: Duration = Duration::from_secs(7 * 24 * 3600);
+const SYNC_RETRY_FIRST: Duration = Duration::from_secs(5 * 60);
+const SYNC_RETRY_MAX: Duration = Duration::from_secs(6 * 3600);
+
+/// Wait before the next sync: weekly after success, otherwise 5 min doubling up to 6 h
+/// (a failed sync used to wait a full week).
+fn sync_delay(consecutive_failures: u32) -> Duration {
+    if consecutive_failures == 0 {
+        return SYNC_INTERVAL_OK;
+    }
+    let factor = 1u32 << (consecutive_failures - 1).min(16);
+    SYNC_RETRY_FIRST.saturating_mul(factor).min(SYNC_RETRY_MAX)
+}
+
+/// Background loop: sync the configured country; after a download, poke the scheduler so the
+/// status is recomputed with holidays (it ran without them while the data was missing).
+pub async fn background_task(poke: std::sync::Arc<crate::watchers::PokeGate>) {
+    let mut failures: u32 = 0;
     loop {
         let country = sdss_core::config::load_config(&paths::config_file())
             .map(|c| c.schedule.country)
             .unwrap_or_else(|_| "DE".to_string());
-        if let Err(e) = ensure_country_sync(&country) {
-            tracing::warn!(
-                target: "sdss::holidays",
-                country = %country,
-                error = %e,
-                "holiday sync failed"
-            );
+        let had_fresh_data = !needs_refresh(&cache_path(&country));
+        match ensure_country_sync(&country) {
+            Ok(()) => {
+                failures = 0;
+                if !had_fresh_data {
+                    poke.poke_debounced().await;
+                }
+            }
+            Err(e) => {
+                failures = failures.saturating_add(1);
+                tracing::warn!(
+                    target: "sdss::holidays",
+                    country = %country,
+                    error = %e,
+                    retry_secs = sync_delay(failures).as_secs(),
+                    "holiday sync failed"
+                );
+            }
         }
-        tokio::time::sleep(Duration::from_secs(7 * 24 * 3600)).await;
+        tokio::time::sleep(sync_delay(failures)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_delay_backs_off_after_failures() {
+        assert_eq!(sync_delay(0), SYNC_INTERVAL_OK);
+        assert_eq!(sync_delay(1), Duration::from_secs(5 * 60));
+        assert_eq!(sync_delay(2), Duration::from_secs(10 * 60));
+        assert_eq!(sync_delay(3), Duration::from_secs(20 * 60));
+        assert_eq!(sync_delay(7), Duration::from_secs(320 * 60), "5 min * 64");
+        assert_eq!(sync_delay(8), SYNC_RETRY_MAX, "5 min * 128 capped at 6 h");
+        assert_eq!(sync_delay(u32::MAX), SYNC_RETRY_MAX, "no overflow");
     }
 }

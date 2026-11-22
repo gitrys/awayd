@@ -10,10 +10,11 @@ use sdss_core::config::schema::AppConfig;
 use sdss_ipc::SchedulerApi;
 use tokio::sync::RwLock;
 
-use crate::holidays::{self, load_holiday_nearby_years};
+use crate::holidays::{self, load_holidays_or_empty};
 use crate::override_state;
 use crate::runtime_config::build_config;
 use crate::secret;
+use crate::state_store::update_state;
 use crate::watchers::PokeGate;
 
 /// In-memory cache for `status()`.
@@ -212,34 +213,22 @@ impl SchedulerApi for SchedulerService {
             }
         };
         let now = chrono::Local::now();
-        let hol = match load_holiday_nearby_years(
-            &app.schedule.country,
-            &app.schedule.subdiv,
-            now.year(),
-        ) {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!(target: "sdssd::api", "SetOverride holidays: {e}");
-                return false;
-            }
-        };
+        // Missing holiday data must not block a manual override;
+        // only the boundary-mode expiry may then ignore a holiday.
+        let (hol, hol_warning) =
+            load_holidays_or_empty(&app.schedule.country, &app.schedule.subdiv, now.year());
+        if let Some(w) = hol_warning {
+            tracing::warn!(target: "sdssd::api", "SetOverride holidays: {w}");
+        }
         let exp = override_state::override_expires_at(now, ttl_seconds, &work, &hol);
         let exp_s = exp.format("%Y-%m-%dT%H:%M:%S").to_string();
-        let path = paths::state_file();
-        let mut st = match sdss_core::config::load_state(&path) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(target: "sdssd::api", "SetOverride load state: {e}");
-                return false;
-            }
-        };
-        st.r#override = Some(sdss_core::config::state::OverrideRecord {
+        let record = sdss_core::config::state::OverrideRecord {
             version: override_state::OVERRIDE_JSON_VERSION,
             work_mode,
             expires_at: exp_s,
-        });
-        if let Err(e) = sdss_core::config::save_state(&path, &st) {
-            tracing::warn!(target: "sdssd::api", "SetOverride save: {e}");
+        };
+        if let Err(e) = update_state(&paths::state_file(), |st| st.r#override = Some(record)) {
+            tracing::warn!(target: "sdssd::api", "SetOverride update state: {e:#}");
             return false;
         }
         self.poke.poke_immediate();
@@ -247,17 +236,8 @@ impl SchedulerApi for SchedulerService {
     }
 
     async fn clear_override(&self) -> bool {
-        let path = paths::state_file();
-        let mut st = match sdss_core::config::load_state(&path) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(target: "sdssd::api", "SetOverride load state: {e}");
-                return false;
-            }
-        };
-        st.r#override = None;
-        if let Err(e) = sdss_core::config::save_state(&path, &st) {
-            tracing::warn!(target: "sdssd::api", "ClearOverride save: {e}");
+        if let Err(e) = update_state(&paths::state_file(), |st| st.r#override = None) {
+            tracing::warn!(target: "sdssd::api", "ClearOverride update state: {e:#}");
             return false;
         }
         self.poke.poke_immediate();

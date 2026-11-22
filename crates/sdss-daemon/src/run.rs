@@ -71,8 +71,9 @@ pub async fn run_backend(handle: AgentHandle) -> Result<()> {
         run_pipe_server(api, shut_pipe).await;
     });
 
+    let poke_holidays = poke_gate.clone();
     tokio::spawn(async move {
-        crate::holidays::sync::background_task().await;
+        crate::holidays::sync::background_task(poke_holidays).await;
     });
 
     let (power_tx, power_rx) = std::sync::mpsc::channel::<()>();

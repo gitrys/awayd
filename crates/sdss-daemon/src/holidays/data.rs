@@ -356,3 +356,22 @@ pub fn load_holiday_nearby_years(
     }
     Ok(a)
 }
+
+/// Like [`load_holiday_nearby_years`], but missing or unreadable holiday data is not fatal:
+/// returns an empty set plus a warning for the status. Without this,
+/// a first start without network applied no status at all and manual overrides failed.
+pub fn load_holidays_or_empty(
+    country: &str,
+    subdiv: &str,
+    year: i32,
+) -> (HolidaySet, Option<String>) {
+    match load_holiday_nearby_years(country, subdiv, year) {
+        Ok(set) => (set, None),
+        Err(e) => (
+            HolidaySet::default(),
+            Some(format!(
+                "{e}; public holidays are ignored until holiday data is available"
+            )),
+        ),
+    }
+}

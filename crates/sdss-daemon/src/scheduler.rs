@@ -12,13 +12,14 @@ use tokio::sync::{watch, Notify, RwLock};
 
 use crate::apply::apply_presence;
 use crate::apply::ApplyResult;
-use crate::holidays::{load_holiday_nearby_years, HolidaySet};
+use crate::holidays::{load_holidays_or_empty, HolidaySet};
 use crate::local_time::{resolve_local, trim_to_minute};
 use crate::override_state;
 use crate::runtime_config::build_config;
 use crate::schedule_next::next_schedule_flip_after_default;
 use crate::secret;
 use crate::service::StatusCache;
+use crate::state_store::update_state;
 use crate::watchers::PokeGate;
 use sdss_core::config::paths;
 use sdss_core::config::state::AppState;
@@ -142,8 +143,12 @@ async fn run_one_tick(
         let mut state = config::load_state(state_path).context("load state")?;
         let now = Local::now();
         let year = now.year();
-        let hol = load_holiday_nearby_years(&app.schedule.country, &app.schedule.subdiv, year)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let (hol, hol_warning) =
+            load_holidays_or_empty(&app.schedule.country, &app.schedule.subdiv, year);
+        if let Some(w) = hol_warning {
+            tracing::warn!(target: "sdss::holidays", "{w}");
+            errors.push(w);
+        }
 
         let (mut work_mode, mut source, ov) =
             override_state::effective_work_mode(&work, now, &hol, &state);
@@ -170,15 +175,18 @@ async fn run_one_tick(
         let partial_failure = should_apply && !apply_ok;
 
         if should_apply {
-            state.last_apply = Some(LastApplyRecord {
+            let record = LastApplyRecord {
                 ok: apply_ok,
                 work_mode,
                 source: source.to_string(),
                 at: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 discord_error: apply_result.discord_error.clone(),
                 steam_error: apply_result.steam_error.clone(),
-            });
-            config::save_state(state_path, &state).context("save state")?;
+            };
+            // Re-load and change only `last_apply`: an override set while the apply was
+            // running must not be overwritten with the copy loaded at the start of the tick.
+            state = update_state(state_path, |st| st.last_apply = Some(record))
+                .context("save state")?;
             record_apply(applied, target_online, &apply_result);
         }
 

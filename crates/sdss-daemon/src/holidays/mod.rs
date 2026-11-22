@@ -9,8 +9,8 @@ pub mod sync;
 
 pub use data::{
     clear_holiday_cache, holiday_year_summary, holiday_year_summary_on, list_holidays_for_subdiv,
-    load_holiday_nearby_years, load_holiday_set, resolve_country_bytes, year_range_in_file,
-    HolidayListEntry, HolidaySet, HolidaySource, HolidayYearSummary,
+    load_holiday_nearby_years, load_holiday_set, load_holidays_or_empty, resolve_country_bytes,
+    year_range_in_file, HolidayListEntry, HolidaySet, HolidaySource, HolidayYearSummary,
 };
 pub use sync::{
     ensure_country, holiday_data_status, list_available_countries_cached, list_cached_bundles,

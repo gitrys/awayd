@@ -14,3 +14,13 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 - **Holiday refresh offline (#62):** go offline, click "Refresh holiday data" → error mentions that
   existing data stays active, `data/holidays/<CC>.json` still exists; online refresh replaces it.
 - **DST (#32):** not reproducible manually; covered by unit tests (chrono-tz) and `tests/dst_local.rs`.
+
+## 2026-11-22 – Fix plan 2a
+
+- **Override during a tick (#1):** set an override from the tray right while a status change is
+  being applied (e.g. right after Discord starts) → the override stays active, `state.json` keeps
+  the `override` entry.
+- **First start without network (#20):** empty data folder (no `data/holidays/<CC>.json`), network
+  off, start `sdssd` → status is applied anyway, status/tray shows the "holidays are ignored"
+  warning, a manual override works. Turn the network on → within about 5 min the log shows
+  `cached holiday data from Nager.Date` and a new tick runs.

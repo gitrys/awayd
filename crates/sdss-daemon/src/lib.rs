@@ -12,6 +12,7 @@ pub mod schedule_next;
 pub mod scheduler;
 pub mod secret;
 pub mod service;
+pub mod state_store;
 pub mod tray;
 pub mod watchers;
 pub mod work_window;
