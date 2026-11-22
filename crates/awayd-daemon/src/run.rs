@@ -8,7 +8,7 @@ use awayd_core::config::{self, paths};
 use awayd_ipc::{run_pipe_server, SchedulerApi};
 use tokio::sync::{mpsc, watch, Notify, RwLock};
 
-use crate::platform::windows::{discord_watch, power};
+use crate::platform::windows::{power, process_watch};
 use crate::service::{SchedulerService, StatusCache};
 use crate::watchers::PokeGate;
 
@@ -86,7 +86,7 @@ pub async fn run_backend(handle: AgentHandle) -> Result<()> {
         }
     });
 
-    discord_watch::spawn(poke_gate.clone());
+    process_watch::spawn(poke_gate.clone());
 
     let sched_shutdown = shutdown.clone();
     let sched = tokio::spawn(async move {

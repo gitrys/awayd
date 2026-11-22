@@ -1,14 +1,14 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
-//! Check whether a process with a given executable name is running (Toolhelp snapshot).
+//! Running processes from a Toolhelp snapshot (no WMI: no COM, no WMI quota).
 
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 
-/// `true` if a process whose executable name equals `exe_name` (case-insensitive, e.g.
-/// `"steam.exe"`) is running. Returns `Err` when the snapshot cannot be taken.
-pub fn is_process_running(exe_name: &str) -> Result<bool, String> {
+/// Visit every process of one snapshot as (executable name, PID) until `visit` returns
+/// `false`. `Err` when the snapshot cannot be taken.
+fn scan_processes(mut visit: impl FnMut(&str, u32) -> bool) -> Result<(), String> {
     // SAFETY: plain Win32 calls; the snapshot handle is closed before returning and the
     // entry struct is initialised with its size as the API requires.
     unsafe {
@@ -18,7 +18,6 @@ pub fn is_process_running(exe_name: &str) -> Result<bool, String> {
             dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
             ..Default::default()
         };
-        let mut found = false;
         let mut more = Process32FirstW(snapshot, &mut entry).is_ok();
         while more {
             let len = entry
@@ -27,15 +26,35 @@ pub fn is_process_running(exe_name: &str) -> Result<bool, String> {
                 .position(|&c| c == 0)
                 .unwrap_or(entry.szExeFile.len());
             let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
-            if name.eq_ignore_ascii_case(exe_name) {
-                found = true;
+            if !visit(&name, entry.th32ProcessID) {
                 break;
             }
             more = Process32NextW(snapshot, &mut entry).is_ok();
         }
         let _ = CloseHandle(snapshot);
-        Ok(found)
+        Ok(())
     }
+}
+
+/// `true` if a process whose executable name equals `exe_name` (case-insensitive, e.g.
+/// `"steam.exe"`) is running. Returns `Err` when the snapshot cannot be taken.
+pub fn is_process_running(exe_name: &str) -> Result<bool, String> {
+    let mut found = false;
+    scan_processes(|name, _| {
+        found = name.eq_ignore_ascii_case(exe_name);
+        !found
+    })?;
+    Ok(found)
+}
+
+/// All running processes as (executable name, PID), from one snapshot.
+pub fn running_processes() -> Result<Vec<(String, u32)>, String> {
+    let mut out = Vec::new();
+    scan_processes(|name, pid| {
+        out.push((name.to_string(), pid));
+        true
+    })?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -55,5 +74,12 @@ mod tests {
             is_process_running("awayd-surely-not-running-7f3a.exe"),
             Ok(false)
         );
+    }
+
+    #[test]
+    fn snapshot_lists_own_pid() {
+        let own = std::process::id();
+        let list = running_processes().unwrap();
+        assert!(list.iter().any(|(_, pid)| *pid == own), "own pid {own}");
     }
 }

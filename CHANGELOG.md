@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields are dropped), raw Discord tokens are redacted, timestamps carry the UTC offset
   (`…T17:59:21.311+01:00`), and a changed `advanced.log_min_level` takes effect on save /
   reload without restarting the daemon.
+- Starts of Discord and Steam are detected again on systems where other programs use up the
+  per-user WMI polling quota (e.g. Logitech G HUB with many running processes): awayd now
+  compares process snapshots every 2 s instead of a WMI subscription, which failed with
+  `0x8004106C` and logged a warning every 10 s. The `wmi` dependency is gone.
 
 ### Changed
 

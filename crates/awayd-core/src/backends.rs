@@ -11,7 +11,7 @@ pub struct BackendInfo {
     /// Stable id: config key, credential name, log field `backend`, status entries.
     pub id: &'static str,
     pub display_name: &'static str,
-    /// Executables whose start triggers a re-apply (WMI `Win32_Process.Name`).
+    /// Executables whose start triggers a re-apply (process name as in Task Manager).
     pub process_names: &'static [&'static str],
     /// Label of the credential this backend needs (e.g. "Discord token"); `None` = none.
     pub credential_label: Option<&'static str>,
@@ -58,7 +58,7 @@ pub fn needs_credential(id: &str) -> bool {
     find(id).is_some_and(|b| b.credential_label.is_some())
 }
 
-/// Process names of all backends, in table order (one WMI subscription for all of them).
+/// Process names of all backends, in table order (watched by the process watcher).
 pub fn all_process_names() -> Vec<&'static str> {
     ALL.iter()
         .flat_map(|b| b.process_names.iter().copied())

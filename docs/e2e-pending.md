@@ -34,8 +34,7 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   (`permanent=true`), status shows "not retried automatically until the token is changed", no
   further Discord requests every 30–120 s, Steam is not re-triggered. Set a valid token → Discord
   is applied again. Remove the token → Discord `presence skipped`, no retries.
-- **WMI query with two names:** after a reboot, `cargo test -p awayd-daemon --lib typed_event`
-  (local WMI quota was exhausted on 2026-11-22, see commit 42c832a).
+- **Program starts (process watcher without WMI, see "Plan W" below).**
 
 ## 2026-11-22 – Fix plan 3 (autostart toggle, tray error state, build script)
 
@@ -99,3 +98,12 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 - **Logs:** new lines have `ts` with offset (`+01:00`); the settings log view still shows only
   the time. Set `[advanced] log_min_level = "warn"` and save in the settings (or Reload) → log
   line "log capture level applied", no more INFO lines afterwards; back to "debug".
+
+## 2026-11-22 – Plan W (process watcher without WMI)
+
+- **Re-apply on program start:** with awayd running, start Steam (and, with Discord on, Discord)
+  → within about 2 s the log shows `steam.exe started` / `Discord.exe started` (target
+  `awayd::process_watch`) and a re-apply (`presence sent`). Discord's several processes cause
+  only one re-apply.
+- **No WMI warnings:** `awayctl logs --grep wmi` shows no new lines; also with Logitech G HUB
+  running and many processes open (the case that broke the WMI watcher).
