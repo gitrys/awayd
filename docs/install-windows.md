@@ -1,14 +1,14 @@
-# SDSS — Windows install (portable)
+# awayd — Windows install (portable)
 
-Steam / Discord Status Scheduler for **Windows 11**. One resident process (`sdssd.exe`) runs the scheduler and system tray.
+awayd for **Windows 11**. One resident process (`awayd.exe`) runs the scheduler and system tray.
 
 ## Portable folder layout
 
 ```
-sdss-portable/
-  sdssd.exe           # resident agent (scheduler + tray)
-  sdss-settings.exe   # settings GUI (on demand)
-  sdss.exe            # CLI
+awayd-portable/
+  awayd.exe            # resident agent (scheduler + tray)
+  awayd-settings.exe   # settings GUI (on demand)
+  awayctl.exe          # CLI
   portable.marker
   config/
     config.toml
@@ -18,7 +18,7 @@ sdss-portable/
     holidays/
 ```
 
-Place `portable.marker` next to the EXEs (or set `SDSS_PORTABLE=1`) so config/state/data live **beside the binaries**.
+Place `portable.marker` next to the EXEs (or set `AWAYD_PORTABLE=1`) so config/state/data live **beside the binaries**.
 
 ## Build
 
@@ -30,29 +30,29 @@ cargo build --release
 
 ## First run
 
-1. Copy the portable folder anywhere (e.g. `F:\apps\sdss-portable\`).
-2. Run `sdssd.exe` — tray icon appears.
-3. Open **Settings** from the tray menu (or run `sdss-settings.exe`).
+1. Copy the portable folder anywhere (e.g. `F:\apps\awayd-portable\`).
+2. Run `awayd.exe` — tray icon appears.
+3. Open **Settings** from the tray menu (or run `awayd-settings.exe`).
 4. Complete the wizard: Discord token, Germany/Bundesland, work hours.
-5. Register autostart: `sdss.exe install-autostart`
+5. Register autostart: `awayctl.exe install-autostart`
 
 ## Autostart
 
-One `HKCU\Run` entry starts `sdssd.exe` at login (no admin):
+One `HKCU\Run` entry starts `awayd.exe` at login (no admin):
 
 ```powershell
-sdss.exe install-autostart
-sdss.exe uninstall-autostart
+awayctl.exe install-autostart
+awayctl.exe uninstall-autostart
 ```
 
 ## CLI
 
 | Command | Purpose |
 |---------|---------|
-| `sdss doctor` | Paths, daemon reachability, status |
-| `sdss validate` | Validate `config.toml` |
-| `sdss override set invisible` | Temporary override |
-| `sdss override clear` | Clear override |
+| `awayctl doctor` | Paths, daemon reachability, status |
+| `awayctl validate` | Validate `config.toml` |
+| `awayctl override set invisible` | Temporary override |
+| `awayctl override clear` | Clear override |
 
 ## Notifications and gaming
 

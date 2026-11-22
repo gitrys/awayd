@@ -1,3 +1,3 @@
 @echo off
-"%~dp0sdss.exe" install-autostart
+"%~dp0awayctl.exe" install-autostart
 pause

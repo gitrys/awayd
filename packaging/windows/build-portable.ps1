@@ -1,11 +1,11 @@
-# Build portable SDSS folder for Windows 11
+# Build portable awayd folder for Windows 11
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $Root
 
 cargo build --release
 
-$Dist = Join-Path $Root "dist\sdss-portable"
+$Dist = Join-Path $Root "dist\awayd-portable"
 New-Item -ItemType Directory -Force -Path $Dist, (Join-Path $Dist "config"), (Join-Path $Dist "data\icons") | Out-Null
 
 $IconsSrc = Join-Path $Root "data\icons"
@@ -13,7 +13,7 @@ if (Test-Path $IconsSrc) {
     Copy-Item (Join-Path $IconsSrc "*.svg") (Join-Path $Dist "data\icons") -Force
 }
 
-$Bins = @("sdssd", "sdss-settings", "sdss")
+$Bins = @("awayd", "awayd-settings", "awayctl")
 foreach ($b in $Bins) {
     Copy-Item "target\release\$b.exe" $Dist -Force
 }

@@ -1,6 +1,0 @@
-[project]
-name = "sdss-export-holidays"
-version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = ["holidays>=0.75"]
-description = "Dev tool: export python-holidays JSON for sdss embedding"

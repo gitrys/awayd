@@ -1,11 +1,11 @@
-# Stop running SDSS portable processes, then deploy a fresh build to the live folder.
+# Stop running awayd portable processes, then deploy a fresh build to the live folder.
 #
 # Updates: *.exe, data\, portable.marker, config\config.toml.example
 # Preserves: config\config.toml and state\ (your live settings, tokens, logs)
 #
 # Default paths (relative to this script):
-#   Source:      ../../dist/sdss-portable
-#   Destination: ../../../sdss-portable  (sibling of the repository folder)
+#   Source:      ../../dist/awayd-portable
+#   Destination: ../../../awayd-portable  (sibling of the repository folder)
 #
 # Usage (from anywhere):
 #   .\packaging\windows\deploy-portable.ps1
@@ -22,20 +22,20 @@ param(
 $ErrorActionPreference = "Stop"
 
 # packaging/windows -> repository root
-$SdssRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-# parent of the repository folder (live bundle is a sibling: <parent>\sdss-portable)
-$AppsRoot = Split-Path -Parent $SdssRoot
+$AwaydRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+# parent of the repository folder (live bundle is a sibling: <parent>\awayd-portable)
+$AppsRoot = Split-Path -Parent $AwaydRoot
 
 if (-not $Source) {
-    $Source = Join-Path $SdssRoot "dist\sdss-portable"
+    $Source = Join-Path $AwaydRoot "dist\awayd-portable"
 }
 if (-not $Destination) {
-    $Destination = Join-Path $AppsRoot "sdss-portable"
+    $Destination = Join-Path $AppsRoot "awayd-portable"
 }
 
-$ProcessNames = @("sdssd", "sdss-settings")
+$ProcessNames = @("awayd", "awayd-settings")
 
-function Stop-SdssProcesses {
+function Stop-AwaydProcesses {
     param([string[]]$Names, [int]$WaitSeconds)
 
     $stopped = @()
@@ -52,7 +52,7 @@ function Stop-SdssProcesses {
     }
 
     if ($stopped.Count -eq 0) {
-        Write-Host "No SDSS processes were running."
+        Write-Host "No awayd processes were running."
         return
     }
 
@@ -127,8 +127,8 @@ Write-Host "Source:      $Source"
 Write-Host "Destination: $Destination"
 Write-Host ""
 
-# Stop before build too — sdssd may be running from dist or the live folder and lock *.exe.
-Stop-SdssProcesses -Names $ProcessNames -WaitSeconds $StopWaitSeconds
+# Stop before build too — awayd may be running from dist or the live folder and lock *.exe.
+Stop-AwaydProcesses -Names $ProcessNames -WaitSeconds $StopWaitSeconds
 
 if ($Build) {
     $buildScript = Join-Path $PSScriptRoot "build-portable.ps1"
@@ -137,10 +137,10 @@ if ($Build) {
     }
     Write-Host "Building portable bundle..."
     & $buildScript
-    $Source = Join-Path $SdssRoot "dist\sdss-portable"
+    $Source = Join-Path $AwaydRoot "dist\awayd-portable"
 }
 
 Deploy-PortableBundle -Src $Source -Dst $Destination
 
 Write-Host ""
-Write-Host "Done. Start sdssd.exe from the destination folder when ready."
+Write-Host "Done. Start awayd.exe from the destination folder when ready."
