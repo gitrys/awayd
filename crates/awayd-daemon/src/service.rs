@@ -130,7 +130,9 @@ impl SchedulerApi for SchedulerService {
                 }
             });
         }
-        self.poke.poke_immediate();
+        // Not `poke_immediate`: each settings save (every vacation or hour change) would
+        // otherwise re-send the status to every service even when nothing changes.
+        self.poke.poke();
         true
     }
 

@@ -113,70 +113,137 @@ fn print_pretty_table(s: &StatusSnapshot) {
     }
 }
 
+/// Exit code 0 only when the daemon answers and reports `ok`; otherwise `main` prints the
+/// error on stderr and exits with 1 (stdout stays plain JSON with `--json`).
 pub async fn doctor(json: bool, pretty: bool) -> Result<()> {
     let cfg_loaded = config::load_config(&paths::config_file());
+
+    let mut client = SchedulerClient::new();
+    let status_raw = if client.ping().await.unwrap_or(false) {
+        match client.status().await {
+            Ok(raw) => Some(raw),
+            Err(e) => {
+                tracing::warn!(target: "awayd::doctor", "status failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if json {
+        let status = status_raw
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
+        println!("{}", doctor_json(status, cfg_loaded.as_ref().ok()));
+        return outcome(status_raw.as_deref());
+    }
 
     println!("  {:<16} {}", "awayctl:", awayd_core::VERSION);
     println!("  {:<16} {}", "portable:", paths::is_portable());
     println!("  {:<16} {}", "config:", paths::config_file().display());
     println!("  {:<16} {}", "state:", paths::state_file().display());
 
-    let mut client = SchedulerClient::new();
-    if client.ping().await.unwrap_or(false) {
-        match client.status().await {
-            Ok(raw) => {
-                if json {
-                    println!("{raw}");
-                    return Ok(());
-                }
-                if pretty {
-                    if let Ok(s) = serde_json::from_str::<StatusSnapshot>(&raw) {
-                        print_pretty_table(&s);
-                        if let Ok(cfg) = &cfg_loaded {
-                            println!("  {:<16} {}", "services:", services_line(cfg));
-                            let cc = cfg.schedule.country.to_uppercase();
-                            if let Ok((ready, y0, y1, fetched, msg)) =
-                                client.holiday_data_status(&cc).await
-                            {
-                                println!(
-                                    "  {:<16} {}",
-                                    "holidays:",
-                                    if ready {
-                                        format!("{cc} {y0}..{y1} (updated {fetched})")
-                                    } else {
-                                        msg
-                                    }
-                                );
+    match status_raw.as_deref() {
+        Some(raw) => match serde_json::from_str::<StatusSnapshot>(raw) {
+            Ok(s) if pretty => {
+                print_pretty_table(&s);
+                if let Ok(cfg) = &cfg_loaded {
+                    println!("  {:<16} {}", "services:", services_line(cfg));
+                    let cc = cfg.schedule.country.to_uppercase();
+                    if let Ok((ready, y0, y1, fetched, msg)) = client.holiday_data_status(&cc).await
+                    {
+                        println!(
+                            "  {:<16} {}",
+                            "holidays:",
+                            if ready {
+                                format!("{cc} {y0}..{y1} (updated {fetched})")
+                            } else {
+                                msg
                             }
-                        }
-                        return Ok(());
+                        );
                     }
                 }
-                println!("daemon status:\n{raw}");
-                return Ok(());
             }
-            Err(e) => tracing::warn!(target: "awayd::doctor", "status failed: {e}"),
+            _ => println!("daemon status:\n{raw}"),
+        },
+        None => {
+            let cfg = cfg_loaded?;
+            println!("{}", c("33", "no daemon; local config:"));
+            println!(
+                "  country={} subdiv={}",
+                cfg.schedule.country, cfg.schedule.subdiv
+            );
+            println!("  services: {}", services_line(&cfg));
+            print_schedule_days(&schedule_days(&cfg.schedule));
         }
     }
+    outcome(status_raw.as_deref())
+}
 
-    let cfg = cfg_loaded?;
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "local": true,
-                "country": cfg.schedule.country,
-                "subdiv": cfg.schedule.subdiv,
-            })
-        );
-    } else {
-        println!("{}", c("33", "no daemon; local config:"));
-        println!(
-            "  country={} subdiv={}",
-            cfg.schedule.country, cfg.schedule.subdiv
-        );
-        println!("  services: {}", services_line(&cfg));
-        print_schedule_days(&schedule_days(&cfg.schedule));
+/// `Err` (exit code 1) when the daemon is not reachable or reports problems.
+fn outcome(status_raw: Option<&str>) -> Result<()> {
+    match status_raw.map(serde_json::from_str::<StatusSnapshot>) {
+        None => anyhow::bail!("awayd is not running or not reachable"),
+        Some(Ok(s)) if s.ok => Ok(()),
+        Some(Ok(_)) => anyhow::bail!("awayd reports problems (ok: no, see errors)"),
+        Some(Err(e)) => anyhow::bail!("unreadable status from awayd: {e}"),
     }
-    Ok(())
+}
+
+/// One JSON object for `doctor --json`: paths, the daemon status (`null` without daemon) and
+/// the local configuration (`null` when config.toml cannot be read).
+fn doctor_json(status: Option<serde_json::Value>, cfg: Option<&AppConfig>) -> serde_json::Value {
+    let local = cfg.map(|c| {
+        let services: serde_json::Map<String, serde_json::Value> = backends::ALL
+            .iter()
+            .map(|b| (b.id.to_string(), c.backend_enabled(b.id).into()))
+            .collect();
+        serde_json::json!({
+            "country": c.schedule.country,
+            "subdiv": c.schedule.subdiv,
+            "services": services,
+        })
+    });
+    serde_json::json!({
+        "awayctl": awayd_core::VERSION,
+        "portable": paths::is_portable(),
+        "config": paths::config_file().display().to_string(),
+        "state": paths::state_file().display().to_string(),
+        "status": status,
+        "local": local,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_is_one_object_with_status_and_local_config() {
+        let status = serde_json::json!({"ok": true, "work_mode": false});
+        let mut cfg = AppConfig::default();
+        cfg.set_backend_enabled(backends::STEAM, false);
+        let v = doctor_json(Some(status.clone()), Some(&cfg));
+        let text = v.to_string();
+        let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(back["status"], status);
+        assert_eq!(back["awayctl"], awayd_core::VERSION);
+        assert_eq!(back["local"]["services"]["steam"], false);
+        assert_eq!(back["local"]["services"]["discord"], false);
+
+        let none = doctor_json(None, None);
+        assert!(none["status"].is_null() && none["local"].is_null());
+    }
+
+    #[test]
+    fn exit_status_follows_daemon_ok() {
+        assert!(outcome(None).is_err());
+        assert!(outcome(Some(
+            r#"{"ok":true,"schema":1,"work_mode":false,"source":"schedule","mode_kind":"schedule"}"#
+        ))
+        .is_ok());
+        assert!(outcome(Some(r#"{"ok":false,"schema":1,"work_mode":false,"source":"schedule","mode_kind":"schedule"}"#)).is_err());
+        assert!(outcome(Some("not json")).is_err());
+    }
 }

@@ -56,10 +56,15 @@ portable folder) or uses the old unquoted format, and offers to fix it.
 
 | Command | Purpose |
 |---------|---------|
-| `awayctl doctor` | Paths, daemon reachability, status |
+| `awayctl doctor` | Paths, daemon reachability, status (`--pretty` table, `--json` one JSON object) |
 | `awayctl validate` | Validate `config.toml` |
 | `awayctl override set invisible` | Temporary override |
 | `awayctl override clear` | Clear override |
+
+Exit codes: `0` = success. `1` = error, also when `doctor` finds the daemon not running or
+reporting problems (`ok: no`, e.g. a missing Discord token while Discord is on), and when the
+daemon rejects `override set` / `override clear`. The reason is printed on stderr, so
+`awayctl doctor --json` keeps valid JSON on stdout.
 
 ## Notifications and gaming
 

@@ -79,11 +79,9 @@ pub fn show_time_field_inline(
         if response.gained_focus() {
             state.focused = true;
         }
-        if response.changed() {
-            if let Some(t) = parse_time(&state.edit) {
-                *time = t;
-            }
-        }
+        // Typing only edits the buffer: intermediate values such as "16:3" (= 16:03) while
+        // typing "16:30" must not be saved and applied. The value is taken on Enter / leaving
+        // the field, or with "OK" in the clock popup.
         if response.lost_focus() {
             state.focused = false;
             if let Some(t) = parse_time(&state.edit) {

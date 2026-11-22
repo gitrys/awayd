@@ -30,7 +30,6 @@ const TOAST_FADE_IN: f64 = 0.15;
 const TOAST_HOLD: f64 = 0.55;
 const TOAST_FADE_OUT: f64 = 0.25;
 const TOAST_GAP: f64 = 0.08;
-const CREDENTIAL_DEBOUNCE_SECS: f64 = 0.8;
 const UI_PREFS_DEBOUNCE_SECS: f64 = 0.5;
 /// Ignore resize tracking until zoom/layout settle after startup.
 const WINDOW_TRACK_GRACE_SECS: f64 = 0.75;
@@ -59,11 +58,6 @@ struct StatusState {
     phase: Option<ToastPhase>,
 }
 
-struct CredentialFieldEvent {
-    changed: bool,
-    lost_focus: bool,
-}
-
 /// Input state of one backend credential (e.g. the Discord token).
 #[derive(Default)]
 struct CredentialField {
@@ -71,8 +65,6 @@ struct CredentialField {
     /// The daemon reports a stored value.
     stored: bool,
     editing: bool,
-    /// Debounced save while typing.
-    save_at: Option<f64>,
 }
 
 /// Backends that need a credential, in table order.
@@ -602,17 +594,16 @@ impl AwaydSettingsApp {
     }
 
     /// Password field for the credential of backend `id`. `widget_id` keeps wizard and
-    /// scheduler page fields apart.
+    /// scheduler page fields apart. Returns true when the input should be saved (Enter or
+    /// leaving the field): saving while typing would store partial tokens and send requests
+    /// with them.
     fn show_credential_field(
         &mut self,
         ui: &mut egui::Ui,
         id: &'static str,
         widget_id: &str,
-    ) -> CredentialFieldEvent {
-        let mut event = CredentialFieldEvent {
-            changed: false,
-            lost_focus: false,
-        };
+    ) -> bool {
+        let mut commit = false;
         let field = self.credentials.entry(id).or_default();
         let widget_id = ui.id().with(widget_id).with(id);
         if field.stored && !field.editing && field.input.is_empty() {
@@ -637,13 +628,14 @@ impl AwaydSettingsApp {
             if response.gained_focus() {
                 field.editing = true;
             }
-            event.changed = response.changed();
-            event.lost_focus = response.lost_focus();
+            commit = response.lost_focus();
         }
         if field.stored && !field.editing {
             ui.label("Saved in Credential Manager. Type a new value to replace.");
+        } else if !field.input.trim().is_empty() {
+            ui.label("Press Enter or leave the field to save.");
         }
-        event
+        commit
     }
 
     /// One switch per service with its risk note and, while switched on, its credential
@@ -667,8 +659,11 @@ impl AwaydSettingsApp {
                 }
                 if let (true, Some(label)) = (on, b.credential_label) {
                     ui.label(format!("{label} ({credential_hint}):"));
-                    let ev = self.show_credential_field(ui, b.id, widget_id);
-                    self.handle_credential_event(b.id, ev);
+                    if self.show_credential_field(ui, b.id, widget_id)
+                        && self.credential_input_pending(b.id)
+                    {
+                        self.save_credential(b.id);
+                    }
                 }
             });
         }
@@ -690,52 +685,12 @@ impl AwaydSettingsApp {
             .is_some_and(|f| !f.input.trim().is_empty())
     }
 
-    fn schedule_credential_save(&mut self, id: &'static str) {
-        let at = self.frame_time + CREDENTIAL_DEBOUNCE_SECS;
-        if let Some(field) = self.credentials.get_mut(id) {
-            field.save_at = (!field.input.trim().is_empty()).then_some(at);
-        }
-    }
-
-    fn flush_credential_save(&mut self, id: &'static str) {
-        if let Some(field) = self.credentials.get_mut(id) {
-            field.save_at = None;
-        }
-        self.save_credential(id);
-    }
-
-    /// Save every field whose debounce time has passed.
-    fn tick_credential_saves(&mut self) {
-        let due: Vec<&'static str> = self
-            .credentials
-            .iter()
-            .filter(|(_, f)| f.save_at.is_some_and(|at| self.frame_time >= at))
-            .map(|(id, _)| *id)
-            .collect();
-        for id in due {
-            if self.credential_input_pending(id) {
-                self.flush_credential_save(id);
-            } else if let Some(f) = self.credentials.get_mut(id) {
-                f.save_at = None;
-            }
-        }
-    }
-
     /// Save all fields that still hold typed input (wizard "Next").
     fn flush_pending_credentials(&mut self) {
         for b in credential_backends() {
             if self.credential_input_pending(b.id) {
-                self.flush_credential_save(b.id);
+                self.save_credential(b.id);
             }
-        }
-    }
-
-    fn handle_credential_event(&mut self, id: &'static str, event: CredentialFieldEvent) {
-        if event.changed {
-            self.schedule_credential_save(id);
-        }
-        if event.lost_focus && self.credential_input_pending(id) {
-            self.flush_credential_save(id);
         }
     }
 
@@ -1120,7 +1075,8 @@ impl AwaydSettingsApp {
             self.set_status_error(format!("Not saved: {e}"));
             return;
         }
-        self.config.mode.kind = "schedule".to_string();
+        // `mode` is kept as loaded: network mode can only be set in config.toml so far and
+        // must not be switched off by an unrelated save.
         let toml = match toml::to_string_pretty(&self.config) {
             Ok(t) => t,
             Err(e) => {
@@ -1298,7 +1254,6 @@ impl eframe::App for AwaydSettingsApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
 
-        self.tick_credential_saves();
         self.tick_ui_prefs_save();
     }
 
@@ -1382,10 +1337,18 @@ impl AwaydSettingsApp {
 
     fn scheduler_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Scheduler");
+        let network_active = self.config.mode.kind == "network";
         ui.add_enabled_ui(false, |ui| {
-            let mut network = false;
+            let mut network = network_active;
             ui.checkbox(&mut network, "Use network mode (coming soon)");
         });
+        if network_active {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "Network mode is set in config.toml and stays active; the work hours below are \
+                 used only while it is off.",
+            );
+        }
         ui.separator();
         let mut schedule_changed = false;
         if self.region_pickers(ui) {

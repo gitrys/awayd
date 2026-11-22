@@ -75,3 +75,16 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   failed — <service>: …" after an invalid token.
 - **Typo in config:** `[backends.discrod]` → settings/daemon reject the config with
   "unknown service [backends.discrod] (known: discord, steam)".
+
+## 2026-11-22 – Fix plan C1 (legacy issues 34, 78, 23, 64)
+
+- **Network mode kept:** set `[mode] kind = "network"` by hand, open settings → the disabled
+  checkbox is ticked with the hint; change a vacation and save → `kind` is still `"network"`.
+- **Time field:** change an end time from 16:24 to 16:30 by typing → no save/apply while typing
+  (log has no `presence sent` for "16:03"); after Enter the value is saved once.
+- **Config save:** change a vacation far in the future → no `presence sent` in the log (target
+  unchanged); switch a service on → it is applied.
+- **Token field:** type a token slowly with pauses → nothing saved until Enter / leaving the
+  field ("Press Enter or leave the field to save"), then one "Discord token saved".
+- **CLI:** `awayctl doctor --json | ConvertFrom-Json` works; `$LASTEXITCODE` is 1 while the
+  status reports `ok: no` and 0 when ok; `awayctl override set foo` → exit code 1.

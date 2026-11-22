@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config.toml` with an unknown service id (e.g. a typo in `[backends.…]`) is rejected with the
   list of known services.
 
+### Fixed
+
+- Saving in the settings no longer switches a network mode set in `config.toml` back to the
+  schedule; the settings show when network mode is active.
+- Time fields take the value on Enter, when leaving the field or with "OK" in the clock popup,
+  not while typing ("16:3" no longer saves and applies 16:03 on the way to 16:30).
+- Credentials (Discord token) are saved on Enter or when leaving the field, no longer 0.8 s
+  after each key press (partial tokens were stored and sent).
+- Saving the configuration only re-applies services whose status changes (or that were just
+  switched on) instead of re-sending the status to every service.
+- `awayctl doctor --json` prints one valid JSON object (paths, daemon status, local config).
+  `awayctl doctor` exits with 1 when the daemon is not running or reports problems, and
+  `awayctl override set/clear` exit with 1 when the daemon rejects the request.
+
 ### Changed
 
 - Steam and Discord are now two implementations of one backend interface; the scheduler, the

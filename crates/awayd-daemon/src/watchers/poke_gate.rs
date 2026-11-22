@@ -31,6 +31,14 @@ impl PokeGate {
         let _ = self.tx.try_send(());
     }
 
+    /// Recompute now without forcing a re-apply: only backends whose target state changed
+    /// (or that were just switched on) are applied. Not debounced, so a second change right
+    /// after the first is not lost. A full channel already holds a pending tick, which reads
+    /// the current config anyway.
+    pub fn poke(&self) {
+        let _ = self.tx.try_send(());
+    }
+
     /// Event from watcher — debounced.
     pub async fn poke_debounced(&self) {
         let mut last = self.last_emit.lock().await;
@@ -47,5 +55,28 @@ impl PokeGate {
 
     pub fn take_immediate(&self) -> bool {
         self.immediate.swap(false, Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_poke_does_not_force_and_is_not_debounced() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let gate = PokeGate::new(250, tx);
+        gate.poke();
+        gate.poke();
+        assert!(rx.try_recv().is_ok());
+        assert!(
+            rx.try_recv().is_ok(),
+            "second poke right after the first is kept"
+        );
+        assert!(!gate.take_immediate());
+
+        gate.poke_immediate();
+        assert!(rx.try_recv().is_ok());
+        assert!(gate.take_immediate());
     }
 }
