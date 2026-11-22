@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-23
+
+### Upgrading from 0.1.0
+
+- Replace all three programs (`awayd.exe`, `awayd-settings.exe`, `awayctl.exe`) together: the
+  named pipe and its methods changed, programs of 0.1.0 cannot talk to a 0.2.0 daemon.
+- Enter the Discord token again in the settings; the token saved by 0.1.0 is not taken over.
+- Existing `config.toml` files keep working; both services stay on.
+
 ### Added
 
 - Steam and Discord can be switched on and off individually (Settings → Scheduler → Services,
@@ -17,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep both services on.
 - `config.toml` with an unknown service id (e.g. a typo in `[backends.…]`) is rejected with the
   list of known services.
+- Network mode: new `mode.probe = "ping"` (ICMP echo without administrator rights) besides
+  `tcp`, e.g. to detect a work laptop in the home network whose firewall blocks all ports;
+  `work_host` is checked every `mode.probe_interval_seconds` (default 60) instead of only at
+  schedule changes; two failed checks in a row are needed for "absent"; host names are
+  resolved without blocking the daemon; an override "until the next change" lasts
+  `mode.network_override_ttl_hours` (the setting existed but was ignored). The config check
+  requires `work_host` in network mode and plausible values for both settings.
+- Screen reader support (Narrator, NVDA) in the settings window via AccessKit; icon-only
+  buttons (calendar, clock, remove, previous/next) have names.
 
 ### Fixed
 
@@ -76,17 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renumbered when the settings load them.
 - `awayctl override --ttl 1h30` is rejected with a hint (`1h30m`) instead of meaning 1 h 30 s.
 - The country list for the settings is downloaded without blocking other requests for it.
-- Network mode: new `mode.probe = "ping"` (ICMP echo without administrator rights) besides
-  `tcp`, e.g. to detect a work laptop in the home network whose firewall blocks all ports;
-  `work_host` is checked every `mode.probe_interval_seconds` (default 60) instead of only at
-  schedule changes; two failed checks in a row are needed for "absent"; host names are
-  resolved without blocking the daemon; an override "until the next change" lasts
-  `mode.network_override_ttl_hours` (the setting existed but was ignored). The config check
-  requires `work_host` in network mode and plausible values for both settings.
 - The settings window no longer freezes while holiday data is refreshed or the country list
   is downloaded: both run in the background, with a spinner / "loading list…".
-- Screen reader support (Narrator, NVDA) in the settings window via AccessKit; icon-only
-  buttons (calendar, clock, remove, previous/next) have names.
 
 ### Changed
 
@@ -135,5 +144,6 @@ First public release of awayd for Windows.
   only manages Steam.
 - The executables are not code-signed yet; Windows SmartScreen may warn on first start.
 
-[Unreleased]: https://github.com/gitrys/awayd/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/gitrys/awayd/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gitrys/awayd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gitrys/awayd/releases/tag/v0.1.0
