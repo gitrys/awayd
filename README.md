@@ -1,51 +1,102 @@
-# sdss — awayd (Windows)
+# awayd
 
-GPL-3.0-or-later. **Windows 11** portable build.
+Away/online status scheduler for **Steam** and **Discord** on Windows.
 
-| Binary | Crate | Role |
-|--------|-------|------|
-| `awayd` | `awayd-daemon` | Resident agent: scheduler + tray + named-pipe IPC |
-| `awayd-settings` | `awayd-settings` | egui settings UI (on demand) |
-| `awayctl` | `awayd-cli` | CLI: doctor, autostart, override, validate |
+awayd runs in the system tray and switches your status automatically: **invisible** during your
+work hours, **online** outside of them. It knows public holidays, your vacations and manual
+overrides ("stay invisible for 2 hours").
 
-Shared: **`awayd-core`**, IPC: **`awayd-ipc`** (JSON-RPC over `\\.\pipe\awayd`).
+> [!WARNING]
+> **Discord: use at your own risk.** awayd changes your Discord status through Discord's web API
+> with **your user token** (the token of your normal Discord account) and a browser user agent.
+> Automating a user account this way is very likely against Discord's Terms of Service
+> ("self-bot") and may get your account restricted or banned. If you do not want that risk, do
+> not enter a Discord token: awayd then only manages Steam.
 
-## Build
+awayd is an independent project. It is **not affiliated with, endorsed by or sponsored by Valve
+Corporation (Steam) or Discord Inc.** "Steam" and "Discord" are trademarks of their respective
+owners and are used here only to describe what the program works with.
 
-```powershell
-cargo build --release
-```
+## Features
 
-Binaries: `target\release\{awayd,awayd-settings,awayctl}.exe`
+- Work hours per weekday, public holidays (country and region), vacation ranges
+- Manual override from the tray or CLI, either for a fixed time or until the next scheduled change
+- Re-applies the status when Discord or Steam starts and after resume from standby
+- Steam is only touched while it is running (awayd never starts Steam)
+- Settings window, live log view, command-line client
+- Portable: everything lives next to the executables
 
-Portable bundle:
+## Requirements
 
-```powershell
-.\packaging\windows\build-portable.ps1
-```
+- Windows 11 (Windows 10 is untested)
+- Steam client and/or Discord account (both optional)
 
-## Run
+## Install (portable)
 
-1. `awayd.exe` — tray + scheduler (single process).
-2. Settings from tray or `awayd-settings.exe`.
-3. `awayctl.exe install-autostart` for login autostart.
+1. Build the portable folder (see [Build](#build)) or take it from a release, and copy it anywhere,
+   for example `C:\Tools\awayd-portable\`.
+2. Start `awayd.exe`. A tray icon appears.
+3. Open **Settings** from the tray menu (or run `awayd-settings.exe`) and complete the wizard:
+   country/region, work hours and, optionally, the Discord token (see the warning above).
+4. Start awayd automatically at login:
 
-Config: `{exe_dir}/config/config.toml` when `portable.marker` is present.
+   ```powershell
+   .\awayctl.exe install-autostart     # adds HKCU\...\Run value "awayd"
+   .\awayctl.exe uninstall-autostart   # removes it again
+   ```
 
-## Logs
+More details: [docs/install-windows.md](docs/install-windows.md).
 
-The daemon writes NDJSON lines to `{exe_dir}/state/logs/awayd.log` (rotated; default DEBUG+ capture).
-View in **Settings → Logs** (live tail, search, level filters) or:
+## Programs
+
+| Program | Crate | Purpose |
+|---|---|---|
+| `awayd.exe` | `awayd-daemon` | Resident agent: scheduler, tray, named-pipe IPC |
+| `awayd-settings.exe` | `awayd-settings` | Settings window (egui), opened on demand |
+| `awayctl.exe` | `awayd-cli` | CLI: `doctor`, `logs`, `override`, `validate`, `holidays`, autostart |
+
+Shared libraries: `awayd-core` (config, schedule logic) and `awayd-ipc` (JSON-RPC over the named
+pipe `\\.\pipe\awayd`).
+
+## Where data is stored
+
+With `portable.marker` next to the executables (the default for the portable folder):
+
+| What | Location |
+|---|---|
+| Settings | `config\config.toml` |
+| State (override, last apply) | `state\state.json` |
+| Logs (NDJSON, rotated) | `state\logs\awayd.log` |
+| Holiday data cache | `data\holidays\<COUNTRY>.json` |
+| Discord token | Windows Credential Manager, service `awayd`. Only if that fails: plain text in `state\discord_token.secret` |
+
+Without `portable.marker` the same layout is used under `%APPDATA%\awayd`.
+
+Logs can be viewed in **Settings → Logs** or with:
 
 ```powershell
 .\awayctl.exe logs --tail 100 --grep sent
 .\awayctl.exe doctor --pretty
 ```
 
-`[advanced]` in `config.toml`: `log_min_level`, `log_max_bytes`, `log_max_files`.
+## Build
 
-See [docs/install-windows.md](docs/install-windows.md).
+Requires Rust 1.88 or newer (MSVC toolchain).
 
-## Linux
+```powershell
+cargo build --release                       # target\release\{awayd,awayd-settings,awayctl}.exe
+.\packaging\windows\build-portable.ps1      # dist\awayd-portable\
+cargo test --workspace -- --test-threads=1  # tests run serially (they share process env vars)
+```
 
-An earlier Linux port exists but is not part of this repository yet.
+## Credits
+
+- Public holiday data: [Nager.Date](https://date.nager.at), downloaded at runtime.
+
+## License
+
+Copyright (C) 2026 awayd contributors.
+
+awayd is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version. See [LICENSE](LICENSE).

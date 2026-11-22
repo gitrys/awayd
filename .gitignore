@@ -18,3 +18,7 @@ portable.marker
 .vscode/
 .idea/
 *.code-workspace
+
+# Local agent instructions (kept out of the public repository)
+AGENTS.md
+CLAUDE.md
