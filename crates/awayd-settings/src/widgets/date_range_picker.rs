@@ -148,7 +148,8 @@ pub fn show_date_range_field(
         let text = range_display(start, end);
         ui.label(text);
         let cal_id = ui.id().with(id_source).with("cal");
-        let cal_response = ui.button("📅").on_hover_text("Pick date range");
+        let cal_response = super::accessible_name(ui.button("📅"), "Pick date range")
+            .on_hover_text("Pick date range");
         if cal_response.clicked() {
             state.tentative_start = None;
             state.phase = PickPhase::PickStart;
@@ -167,7 +168,7 @@ pub fn show_date_range_field(
             |ui| {
                 ui.set_min_width(7.0 * CELL_W + 16.0);
                 ui.horizontal(|ui| {
-                    if ui.button("<").clicked() {
+                    if super::accessible_name(ui.button("<"), "Previous month").clicked() {
                         if state.view_month == 1 {
                             state.view_month = 12;
                             state.view_year -= 1;
@@ -176,7 +177,7 @@ pub fn show_date_range_field(
                         }
                     }
                     ui.label(format!("{}-{:02}", state.view_year, state.view_month));
-                    if ui.button(">").clicked() {
+                    if super::accessible_name(ui.button(">"), "Next month").clicked() {
                         if state.view_month == 12 {
                             state.view_month = 1;
                             state.view_year += 1;

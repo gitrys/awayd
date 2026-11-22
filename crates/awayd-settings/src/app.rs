@@ -10,6 +10,7 @@ use awayd_core::StatusSnapshot;
 use chrono::{Datelike, NaiveDate};
 use eframe::egui;
 
+use crate::background::Job;
 use crate::client::Ipc;
 use crate::pages::logs_page::{
     log_popout_viewport_id, show_logs_docked_placeholder, show_logs_embedded_tab, show_logs_full,
@@ -130,6 +131,12 @@ pub struct AwaydSettingsApp {
     autostart_state: Result<AutostartState, String>,
     /// Version reported by the running daemon (see `refresh_daemon_version`).
     daemon_version: Option<String>,
+    /// For background requests to wake the UI when their result arrives.
+    ctx: egui::Context,
+    /// Country list from the daemon (may download it first, up to 30 s).
+    countries_job: Option<Job<Vec<(String, String)>>>,
+    /// "Refresh holiday data" (downloads several years; can take minutes).
+    refresh_job: Option<Job<String>>,
 }
 
 /// Decide which config the UI may edit.
@@ -210,7 +217,10 @@ impl AwaydSettingsApp {
     pub fn new(cc: &eframe::CreationContext<'_>, ui_prefs: SettingsUiPrefs) -> Self {
         let zoom = ui_prefs.zoom;
         cc.egui_ctx.set_zoom_factor(zoom);
-        let rt = tokio::runtime::Builder::new_current_thread()
+        // One worker thread: background requests (see `background::Job`) run there while the
+        // UI thread keeps drawing; short IPC calls still use `block_on`.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
             .build()
             .expect("settings runtime");
@@ -263,6 +273,9 @@ impl AwaydSettingsApp {
             config_error: None,
             autostart_state: Ok(AutostartState::Off),
             daemon_version: None,
+            ctx: cc.egui_ctx.clone(),
+            countries_job: None,
+            refresh_job: None,
         };
         app.reload();
         app
@@ -312,23 +325,43 @@ impl AwaydSettingsApp {
         }
     }
 
+    /// Start the download in the background (several years, can take minutes); the result is
+    /// handled in [`Self::poll_background_jobs`].
     fn refresh_holiday_data_for_country(&mut self) {
-        let country = self.config.schedule.country.clone();
         if !self.daemon_ok {
             self.set_status_error("Daemon offline — cannot refresh holidays.");
             return;
         }
-        match self.rt.block_on(self.ipc.refresh_holiday_data(&country)) {
-            Ok(msg) => {
-                if msg.starts_with("error:") {
-                    self.set_status_error(msg);
-                } else {
+        if self.refresh_job.is_some() {
+            return;
+        }
+        let country = self.config.schedule.country.clone();
+        self.refresh_job = Some(Job::spawn(&self.rt, &self.ctx, async move {
+            Ipc::new().refresh_holiday_data(&country).await
+        }));
+    }
+
+    /// Take over results of finished background requests.
+    fn poll_background_jobs(&mut self) {
+        if let Some(result) = self.countries_job.as_ref().and_then(Job::poll) {
+            self.countries_job = None;
+            match result {
+                Ok(list) if !list.is_empty() => self.countries = list,
+                Ok(_) => {}
+                Err(e) => tracing::warn!("country list: {e:#}"),
+            }
+        }
+        if let Some(result) = self.refresh_job.as_ref().and_then(Job::poll) {
+            self.refresh_job = None;
+            match result {
+                Ok(msg) if msg.starts_with("error:") => self.set_status_error(msg),
+                Ok(_) => {
                     self.set_status_success("Holiday data refreshed.");
                     self.holiday_flyout.clear_loaded();
                     self.fetch_holiday_flyout();
                 }
+                Err(e) => self.set_status_error(format!("Refresh failed: {e}")),
             }
-            Err(e) => self.set_status_error(format!("Refresh failed: {e}")),
         }
     }
 
@@ -364,7 +397,11 @@ impl AwaydSettingsApp {
                     .spacing([GRID_SPACING, 4.0])
                     .min_col_width(LABEL_W)
                     .show(ui, |ui| {
-                        ui.label("Country");
+                        if self.countries_job.is_some() {
+                            ui.label("Country (loading list…)");
+                        } else {
+                            ui.label("Country");
+                        }
                         if let Some(code) = self.country_picker.show_button(
                             ui,
                             "country",
@@ -407,6 +444,7 @@ impl AwaydSettingsApp {
                             &self.config.schedule.country,
                             &self.config.schedule.subdiv,
                         );
+                        self.holiday_flyout.refreshing = self.refresh_job.is_some();
                         let action = self.holiday_flyout.show(
                             ui,
                             button_w,
@@ -1017,10 +1055,12 @@ impl AwaydSettingsApp {
         let text = std::fs::read_to_string(paths::config_file()).map_err(|e| e.to_string());
         self.apply_loaded_config(resolve_loaded_config(file_exists, text));
         if self.daemon_ok {
-            if let Ok(list) = self.rt.block_on(self.ipc.list_countries()) {
-                if !list.is_empty() {
-                    self.countries = list;
-                }
+            // In the background: the daemon may download the list first (up to 30 s). Until
+            // it arrives the picker keeps the current list.
+            if self.countries_job.is_none() {
+                self.countries_job = Some(Job::spawn(&self.rt, &self.ctx, async {
+                    Ipc::new().list_countries().await
+                }));
             }
             for b in credential_backends() {
                 let stored = self
@@ -1158,6 +1198,7 @@ impl AwaydSettingsApp {
 
 impl eframe::App for AwaydSettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_background_jobs();
         self.frame_time = ctx.input(|i| i.time);
         self.apply_startup_prefs(ctx);
         self.tick_status(ctx);
@@ -1461,7 +1502,10 @@ impl AwaydSettingsApp {
                 ) {
                     changed = true;
                 }
-                if ui.button("🗑").on_hover_text("Remove vacation").clicked() {
+                if crate::widgets::accessible_name(ui.button("🗑"), "Remove vacation")
+                    .on_hover_text("Remove vacation")
+                    .clicked()
+                {
                     remove = Some(i);
                 }
             });

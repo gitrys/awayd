@@ -123,3 +123,14 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   lost ping.
 - **Override in network mode:** tray → override "until next change" → `state.json` expiry is
   now + `network_override_ttl_hours` (default 8 h).
+
+## 2026-11-22 – Plan V (settings: background requests, screen reader)
+
+- **No freeze:** throttle or cut the network, Settings → "View public holidays…" → "Refresh
+  holiday data" → button shows "Refreshing holiday data…" with a spinner, the window stays
+  movable and responsive; the result (success or error) appears when the download ends. First
+  start of the settings after a daemon start: "Country (loading list…)" until the list is
+  there.
+- **Screen reader:** start Narrator (Ctrl+Win+Enter), tab through the settings → buttons,
+  fields and checkboxes are read with their names; the icon buttons read "Pick date range",
+  "Pick time", "Remove vacation", "Previous/Next month", "Previous/Next year".

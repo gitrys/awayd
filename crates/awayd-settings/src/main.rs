@@ -2,6 +2,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod background;
 mod client;
 mod pages;
 mod ui_prefs;

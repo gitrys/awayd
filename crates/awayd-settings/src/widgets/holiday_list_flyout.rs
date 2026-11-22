@@ -21,6 +21,8 @@ pub struct HolidayListFlyout {
     pub year_max: i32,
     pub holidays: Vec<HolidayRow>,
     pub error: Option<String>,
+    /// A refresh of the holiday data is running (set by the host each frame).
+    pub refreshing: bool,
     last_query_key: String,
     popup_was_open: bool,
 }
@@ -107,14 +109,18 @@ impl HolidayListFlyout {
                 );
 
                 ui.horizontal(|ui| {
-                    let prev =
-                        ui.add_enabled(self.view_year > self.year_min, egui::Button::new("◀"));
+                    let prev = super::accessible_name(
+                        ui.add_enabled(self.view_year > self.year_min, egui::Button::new("◀")),
+                        "Previous year",
+                    );
                     if prev.clicked() {
                         self.view_year -= 1;
                     }
                     ui.label(format!("{}", self.view_year));
-                    let next =
-                        ui.add_enabled(self.view_year < self.year_max, egui::Button::new("▶"));
+                    let next = super::accessible_name(
+                        ui.add_enabled(self.view_year < self.year_max, egui::Button::new("▶")),
+                        "Next year",
+                    );
                     if next.clicked() {
                         self.view_year += 1;
                     }
@@ -152,9 +158,22 @@ impl HolidayListFlyout {
                             .weak()
                             .small(),
                     );
-                    if ui.button("Refresh holiday data").clicked() {
-                        action = HolidayFlyoutAction::RefreshCountry;
-                    }
+                    ui.horizontal(|ui| {
+                        let label = if self.refreshing {
+                            "Refreshing holiday data…"
+                        } else {
+                            "Refresh holiday data"
+                        };
+                        if ui
+                            .add_enabled(!self.refreshing, egui::Button::new(label))
+                            .clicked()
+                        {
+                            action = HolidayFlyoutAction::RefreshCountry;
+                        }
+                        if self.refreshing {
+                            ui.spinner();
+                        }
+                    });
                 }
             },
         )

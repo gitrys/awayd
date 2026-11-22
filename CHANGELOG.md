@@ -83,6 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolved without blocking the daemon; an override "until the next change" lasts
   `mode.network_override_ttl_hours` (the setting existed but was ignored). The config check
   requires `work_host` in network mode and plausible values for both settings.
+- The settings window no longer freezes while holiday data is refreshed or the country list
+  is downloaded: both run in the background, with a spinner / "loading list…".
+- Screen reader support (Narrator, NVDA) in the settings window via AccessKit; icon-only
+  buttons (calendar, clock, remove, previous/next) have names.
 
 ### Changed
 

@@ -77,7 +77,8 @@ pub fn show_time_field_inline(
         }
 
         let clock_id = ui.id().with(id_source).with("clock");
-        let clock_response = ui.button("🕐").on_hover_text("Pick time (drag sliders)");
+        let clock_response = super::accessible_name(ui.button("🕐"), "Pick time")
+            .on_hover_text("Pick time (drag sliders)");
         if clock_response.clicked() {
             if let Some(t) = parse_time(&state.edit) {
                 state.popup_hour = t.hour() as i32;
