@@ -96,3 +96,75 @@ async fn missing_token_skips_discord_without_request() {
     assert!(!r.needs_retry());
     mock.verify().await;
 }
+
+/// A long `Retry-After` is not waited for inside the apply (that blocked the scheduler for
+/// the whole time): the backend fails at once and tells the scheduler how long to wait.
+#[tokio::test]
+async fn long_retry_after_returns_at_once_with_delay() {
+    use awayd_core::backends;
+    use awayd_daemon::apply::{apply_presence, build_backend, ApplyPlan};
+
+    let _lock = discord_env_lock().lock().await;
+
+    let mock = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "600"))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    std::env::set_var("AWAYD_DISCORD_API_URL", mock.uri());
+
+    let discord = backends::find(backends::DISCORD).unwrap();
+    let list = vec![build_backend(discord, "DummyDiscordToken".into())];
+    let plan = ApplyPlan {
+        ids: vec![backends::DISCORD],
+    };
+    let started = std::time::Instant::now();
+    let r = apply_presence(&list, false, &plan).await;
+    std::env::remove_var("AWAYD_DISCORD_API_URL");
+
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "took {:?}",
+        started.elapsed()
+    );
+    let outcome = r.get(backends::DISCORD);
+    assert_eq!(
+        outcome.retry_after(),
+        Some(std::time::Duration::from_secs(600)),
+        "{outcome:?}"
+    );
+    assert!(
+        !outcome.needs_retry(),
+        "no backoff retry during a rate limit"
+    );
+    mock.verify().await;
+}
+
+/// A short `Retry-After` (up to 5 s) is still waited for inline and the retry succeeds.
+#[tokio::test]
+async fn short_retry_after_is_waited_inline() {
+    let _lock = discord_env_lock().lock().await;
+
+    let mock = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(204))
+        .with_priority(2)
+        .expect(1)
+        .mount(&mock)
+        .await;
+    std::env::set_var("AWAYD_DISCORD_API_URL", mock.uri());
+
+    let res = awayd_daemon::apply::discord::patch_status("DummyDiscordToken", false).await;
+    std::env::remove_var("AWAYD_DISCORD_API_URL");
+
+    assert!(res.is_ok(), "{res:?}");
+    mock.verify().await;
+}

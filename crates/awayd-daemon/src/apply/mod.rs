@@ -5,6 +5,8 @@
 pub mod discord;
 pub mod steam;
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use awayd_core::backends::{self, BackendInfo};
 use tracing::{info, warn};
@@ -70,6 +72,12 @@ impl Backend for DiscordBackend {
             Err(e) => BackendOutcome::Failed {
                 error: e.to_string(),
                 permanent: e.is_permanent(),
+                retry_after: match e {
+                    discord::DiscordError::RateLimited { retry_after_secs } => {
+                        Some(Duration::from_secs(retry_after_secs))
+                    }
+                    _ => None,
+                },
             },
         }
     }
@@ -118,8 +126,14 @@ pub enum BackendOutcome {
     Sent,
     /// Deliberately not applied (no token, Steam not running): no error, no retry.
     Skipped(String),
-    /// Failed. `permanent` errors are not retried automatically.
-    Failed { error: String, permanent: bool },
+    /// Failed. `permanent` errors are not retried automatically. `retry_after`: the service
+    /// asked not to be contacted again before this delay (rate limit); the scheduler holds the
+    /// backend back until then instead of retrying on its own backoff.
+    Failed {
+        error: String,
+        permanent: bool,
+        retry_after: Option<Duration>,
+    },
 }
 
 impl BackendOutcome {
@@ -134,11 +148,22 @@ impl BackendOutcome {
         matches!(self, Self::Failed { .. })
     }
 
+    /// Delay the service asked for before the next request (rate limit).
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Failed { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
+
+    /// Failed with an error a retry on the scheduler's own backoff may fix (not permanent,
+    /// no delay given by the service).
     pub fn needs_retry(&self) -> bool {
         matches!(
             self,
             Self::Failed {
                 permanent: false,
+                retry_after: None,
                 ..
             }
         )
@@ -213,13 +238,18 @@ fn log_outcome(backend: &str, online: bool, outcome: &BackendOutcome) {
             reason = %reason,
             "presence skipped"
         ),
-        BackendOutcome::Failed { error, permanent } => warn!(
+        BackendOutcome::Failed {
+            error,
+            permanent,
+            retry_after,
+        } => warn!(
             target: "awayd::apply",
             message_id = "awayd_apply_fail",
             backend,
             online,
             ok = false,
             permanent,
+            retry_after_secs = retry_after.map(|d| d.as_secs()),
             error = %error,
             "presence failed"
         ),

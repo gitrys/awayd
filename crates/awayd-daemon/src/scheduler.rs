@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use awayd_core::backends::{self as backend_table, BackendInfo};
@@ -40,6 +40,8 @@ struct BackendState {
     /// Credential the backend rejected permanently (fingerprint + error). The backend is not
     /// retried until the credential changes or the daemon restarts.
     rejected: Option<(u64, String)>,
+    /// The service asked not to be contacted before this time (rate limit) + error.
+    waiting: Option<(Instant, String)>,
 }
 
 /// Per backend id; backends without entry have not been applied yet.
@@ -89,6 +91,28 @@ fn is_blocked(applied: &BackendApplied, b: &dyn Backend) -> bool {
     )
 }
 
+/// The backend asked not to be contacted before a time that has not come yet (rate limit).
+fn is_waiting(applied: &BackendApplied, id: &str, now: Instant) -> bool {
+    applied
+        .get(id)
+        .and_then(|s| s.waiting.as_ref())
+        .is_some_and(|(until, _)| *until > now)
+}
+
+/// Time until the first waiting backend may be contacted again.
+fn earliest_wait(
+    applied: &BackendApplied,
+    backends: &[Box<dyn Backend>],
+    now: Instant,
+) -> Option<Duration> {
+    backends
+        .iter()
+        .filter_map(|b| applied.get(b.id())?.waiting.as_ref())
+        .filter(|(until, _)| *until > now)
+        .map(|(until, _)| until.duration_since(now))
+        .min()
+}
+
 /// Forget backends that are no longer in the list: one that comes back starts fresh.
 fn forget_removed(applied: &mut BackendApplied, backends: &[Box<dyn Backend>]) {
     applied.retain(|id, _| backends.iter().any(|b| b.id() == *id));
@@ -96,20 +120,23 @@ fn forget_removed(applied: &mut BackendApplied, backends: &[Box<dyn Backend>]) {
 
 /// Per backend: apply when forced (startup), poked (`immediate`) or not yet in the target
 /// state. Only stale backends are applied, so a retry of one backend does not re-trigger the
-/// others. A permanently rejected credential blocks its backend even for pokes: the poke
-/// source (user, resume, process watcher) is not known here.
+/// others. A permanently rejected credential, and a running rate limit, hold the backend back
+/// even for pokes: the poke source (user, resume, process watcher) is not known here, and a
+/// request during a rate limit would only be rejected again.
 fn plan_apply(
     force: bool,
     immediate: bool,
     target_online: bool,
     applied: &BackendApplied,
     backends: &[Box<dyn Backend>],
+    now: Instant,
 ) -> ApplyPlan {
     let ids = backends
         .iter()
         .filter(|b| {
             let online = applied.get(b.id()).and_then(|s| s.online);
             !is_blocked(applied, b.as_ref())
+                && !is_waiting(applied, b.id(), now)
                 && (force || immediate || online != Some(target_online))
         })
         .map(|b| b.id())
@@ -122,6 +149,7 @@ fn record_apply(
     target_online: bool,
     result: &ApplyResult,
     backends: &[Box<dyn Backend>],
+    now: Instant,
 ) {
     for (id, outcome) in &result.outcomes {
         let fp = backends
@@ -134,11 +162,18 @@ fn record_apply(
             BackendOutcome::Sent => {
                 st.online = Some(target_online);
                 st.rejected = None;
+                st.waiting = None;
             }
             BackendOutcome::Failed {
                 error,
                 permanent: true,
+                ..
             } => st.rejected = Some((fp, error.clone())),
+            BackendOutcome::Failed {
+                error,
+                retry_after: Some(delay),
+                ..
+            } => st.waiting = Some((now + *delay, error.clone())),
             // Not applied (program not running, no credential): apply again once possible
             // (process watcher poke, credential change or next tick).
             BackendOutcome::Skipped(_) => st.online = None,
@@ -160,6 +195,29 @@ fn blocked_messages(applied: &BackendApplied, backends: &[Box<dyn Backend>]) -> 
             Some(format!(
                 "{}: {error}; not retried automatically until the {what} is changed",
                 b.id()
+            ))
+        })
+        .collect()
+}
+
+/// Status messages for backends held back by a rate limit, with the local time of the next
+/// attempt.
+fn waiting_messages(
+    applied: &BackendApplied,
+    backends: &[Box<dyn Backend>],
+    now: Instant,
+    now_local: DateTime<Local>,
+) -> Vec<String> {
+    backends
+        .iter()
+        .filter_map(|b| {
+            let (until, error) = applied.get(b.id())?.waiting.as_ref()?;
+            let left = until.checked_duration_since(now)?;
+            let at = now_local + chrono::Duration::from_std(left).ok()?;
+            Some(format!(
+                "{}: {error}; next attempt at {}",
+                b.id(),
+                at.format("%H:%M:%S")
             ))
         })
         .collect()
@@ -291,7 +349,14 @@ async fn run_one_tick(
         let immediate = poke_gate.take_immediate();
         let target_online = !work_mode;
         forget_removed(applied, &backends);
-        let plan = plan_apply(force, immediate, target_online, applied, &backends);
+        let plan = plan_apply(
+            force,
+            immediate,
+            target_online,
+            applied,
+            &backends,
+            Instant::now(),
+        );
         let should_apply = plan.any();
 
         let apply_result = if should_apply {
@@ -301,7 +366,7 @@ async fn run_one_tick(
         };
         let apply_ok = apply_result.all_ok();
         // Retry only errors a retry may fix; skipped backends and rejected tokens are not
-        // retried.
+        // retried, rate-limited ones wait for the time the service gave (`earliest_wait`).
         let partial_failure = should_apply && apply_result.needs_retry();
 
         if should_apply {
@@ -316,9 +381,21 @@ async fn run_one_tick(
             // running must not be overwritten with the copy loaded at the start of the tick.
             state = update_state(state_path, |st| st.last_apply = Some(record))
                 .context("save state")?;
-            record_apply(applied, target_online, &apply_result, &backends);
+            record_apply(
+                applied,
+                target_online,
+                &apply_result,
+                &backends,
+                Instant::now(),
+            );
         }
         errors.extend(blocked_messages(applied, &backends));
+        errors.extend(waiting_messages(
+            applied,
+            &backends,
+            Instant::now(),
+            Local::now(),
+        ));
 
         let next = next_wake_time(now, &work, &hol, &state);
         let next_wake = Some(next.format("%Y-%m-%dT%H:%M:%S").to_string());
@@ -349,13 +426,17 @@ async fn run_one_tick(
             .to_std()
             .unwrap_or(Duration::from_secs(60));
         let schedule_sleep = dur.clamp(Duration::from_secs(1), Duration::from_secs(86400 * 7));
-        let sleep = next_sleep_after_tick(schedule_sleep, partial_failure, retry_backoff);
+        let mut sleep = next_sleep_after_tick(schedule_sleep, partial_failure, retry_backoff);
         if partial_failure && sleep < schedule_sleep {
             tracing::warn!(
                 target: "awayd::apply",
                 retry_secs = sleep.as_secs(),
                 "partial apply failure, scheduling retry"
             );
+        }
+        // Wake when a rate-limited backend may be contacted again.
+        if let Some(wait) = earliest_wait(applied, &backends, Instant::now()) {
+            sleep = sleep.min(wait.max(Duration::from_secs(1)));
         }
         Ok(sleep)
     }
@@ -463,6 +544,7 @@ pub async fn run(
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use chrono::TimeZone;
 
     /// Any backend id works: the scheduler has no per-service code.
     struct Dummy {
@@ -498,6 +580,7 @@ mod tests {
                     BackendState {
                         online,
                         rejected: None,
+                        waiting: None,
                     },
                 )
             })
@@ -512,17 +595,32 @@ mod tests {
         BackendOutcome::Failed {
             error: "err".into(),
             permanent,
+            retry_after: None,
         }
     }
 
     const CRED: u64 = 1;
     const OTHER_CRED: u64 = 2;
 
+    /// Fixed "now" so planning and recording compare against the same instant.
+    fn t0() -> Instant {
+        static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        *T0.get_or_init(Instant::now)
+    }
+
+    fn rate_limited(secs: u64) -> BackendOutcome {
+        BackendOutcome::Failed {
+            error: format!("rate limited (retry after {secs}s)"),
+            permanent: false,
+            retry_after: Some(Duration::from_secs(secs)),
+        }
+    }
+
     #[test]
     fn plan_applies_only_the_stale_backends() {
         let b = list(&[("chat", CRED), ("games", 0), ("third", 0)]);
         let a = applied(&[("games", Some(false))]);
-        let plan = plan_apply(false, false, false, &a, &b);
+        let plan = plan_apply(false, false, false, &a, &b, t0());
         assert_eq!(
             plan.ids,
             vec!["chat", "third"],
@@ -534,32 +632,38 @@ mod tests {
     fn plan_is_empty_when_all_match() {
         let b = list(&[("chat", CRED), ("games", 0)]);
         let a = applied(&[("chat", Some(false)), ("games", Some(false))]);
-        assert!(!plan_apply(false, false, false, &a, &b).any());
+        assert!(!plan_apply(false, false, false, &a, &b, t0()).any());
     }
 
     #[test]
     fn poke_and_force_apply_all() {
         let b = list(&[("chat", CRED), ("games", 0)]);
         let a = applied(&[("chat", Some(false)), ("games", Some(false))]);
-        assert_eq!(plan_apply(false, true, false, &a, &b).ids.len(), 2);
-        assert_eq!(plan_apply(true, false, false, &a, &b).ids.len(), 2);
+        assert_eq!(plan_apply(false, true, false, &a, &b, t0()).ids.len(), 2);
+        assert_eq!(plan_apply(true, false, false, &a, &b, t0()).ids.len(), 2);
     }
 
     #[test]
     fn rejected_credential_blocks_backend_until_it_changes() {
         let b = list(&[("chat", CRED), ("games", 0)]);
         let mut a = applied(&[("games", Some(false))]);
-        record_apply(&mut a, false, &result(vec![("chat", failed(true))]), &b);
+        record_apply(
+            &mut a,
+            false,
+            &result(vec![("chat", failed(true))]),
+            &b,
+            t0(),
+        );
         for (force, immediate) in [(false, false), (false, true), (true, true)] {
             assert!(
-                !plan_apply(force, immediate, false, &a, &b).contains("chat"),
+                !plan_apply(force, immediate, false, &a, &b, t0()).contains("chat"),
                 "blocked for force={force} immediate={immediate}"
             );
         }
         assert_eq!(blocked_messages(&a, &b).len(), 1);
 
         let changed = list(&[("chat", OTHER_CRED), ("games", 0)]);
-        assert!(plan_apply(false, false, false, &a, &changed).contains("chat"));
+        assert!(plan_apply(false, false, false, &a, &changed, t0()).contains("chat"));
         assert!(blocked_messages(&a, &changed).is_empty());
 
         record_apply(
@@ -567,12 +671,14 @@ mod tests {
             false,
             &result(vec![("chat", BackendOutcome::Sent)]),
             &changed,
+            t0(),
         );
         assert_eq!(
             a["chat"],
             BackendState {
                 online: Some(false),
-                rejected: None
+                rejected: None,
+                waiting: None
             }
         );
     }
@@ -586,6 +692,7 @@ mod tests {
             false,
             &result(vec![(backend_table::DISCORD, failed(true))]),
             &b,
+            t0(),
         );
         assert_eq!(
             blocked_messages(&a, &b),
@@ -601,12 +708,15 @@ mod tests {
             ("chat", failed(false)),
             ("games", BackendOutcome::Sent),
         ]);
-        record_apply(&mut a, false, &r, &b);
+        record_apply(&mut a, false, &r, &b, t0());
         assert_eq!(a["chat"].online, Some(true));
         assert_eq!(a["games"].online, Some(false));
         assert!(a["chat"].rejected.is_none());
         assert!(r.needs_retry());
-        assert_eq!(plan_apply(false, false, false, &a, &b).ids, vec!["chat"]);
+        assert_eq!(
+            plan_apply(false, false, false, &a, &b, t0()).ids,
+            vec!["chat"]
+        );
     }
 
     #[test]
@@ -638,9 +748,10 @@ mod tests {
                 BackendOutcome::Skipped("not running".into()),
             )]),
             &b,
+            t0(),
         );
         assert_eq!(a["games"].online, None);
-        assert!(plan_apply(false, false, false, &a, &b).contains("games"));
+        assert!(plan_apply(false, false, false, &a, &b, t0()).contains("games"));
     }
 
     #[test]
@@ -687,5 +798,63 @@ mod tests {
         let sleep = next_sleep_after_tick(Duration::from_secs(3600), true, &mut backoff);
         assert_eq!(sleep, APPLY_RETRY_INITIAL);
         assert_eq!(backoff, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn rate_limited_backend_waits_even_for_pokes_others_continue() {
+        let b = list(&[("chat", CRED), ("games", 0)]);
+        let mut a = applied(&[("games", Some(false))]);
+        let r = result(vec![("chat", rate_limited(600))]);
+        // Not a case for the scheduler's own 30/60/120 s backoff.
+        assert!(!r.needs_retry());
+        record_apply(&mut a, false, &r, &b, t0());
+
+        let later = t0() + Duration::from_secs(60);
+        for (force, immediate) in [(false, false), (false, true), (true, true)] {
+            let plan = plan_apply(force, immediate, false, &a, &b, later);
+            assert!(
+                !plan.contains("chat"),
+                "force={force} immediate={immediate}"
+            );
+        }
+        // The other backend is still applied on a poke.
+        assert!(plan_apply(false, true, false, &a, &b, later).contains("games"));
+
+        // Wake exactly when the wait is over, then the backend is planned again.
+        assert_eq!(earliest_wait(&a, &b, later), Some(Duration::from_secs(540)));
+        let after = t0() + Duration::from_secs(600);
+        assert_eq!(earliest_wait(&a, &b, after), None);
+        assert!(plan_apply(false, false, false, &a, &b, after).contains("chat"));
+    }
+
+    #[test]
+    fn waiting_message_names_next_attempt_and_clears_after_success() {
+        let b = list(&[("chat", CRED)]);
+        let mut a = BackendApplied::new();
+        record_apply(
+            &mut a,
+            false,
+            &result(vec![("chat", rate_limited(90))]),
+            &b,
+            t0(),
+        );
+        let local = chrono::Local
+            .with_ymd_and_hms(2026, 11, 22, 19, 40, 40)
+            .unwrap();
+        assert_eq!(
+            waiting_messages(&a, &b, t0(), local),
+            vec!["chat: rate limited (retry after 90s); next attempt at 19:42:10"]
+        );
+
+        let after = t0() + Duration::from_secs(90);
+        record_apply(
+            &mut a,
+            false,
+            &result(vec![("chat", BackendOutcome::Sent)]),
+            &b,
+            after,
+        );
+        assert!(waiting_messages(&a, &b, after, local).is_empty());
+        assert!(a["chat"].waiting.is_none());
     }
 }

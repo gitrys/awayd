@@ -132,13 +132,18 @@ async fn patch_status_once(auth_token: &str, online: bool) -> Result<String, Dis
     }
 }
 
+/// Longest `Retry-After` waited for inside the apply. The tick blocks the scheduler (pokes,
+/// override, quit); longer waits are returned as [`DiscordError::RateLimited`] and the
+/// scheduler holds Discord back until then without blocking.
+pub const MAX_INLINE_RETRY_AFTER_SECS: u64 = 5;
+
 pub async fn patch_status(auth_token: &str, online: bool) -> Result<String, DiscordError> {
     let mut backoff_secs = 1u64;
     for attempt in 0..4 {
         match patch_status_once(auth_token, online).await {
             Ok(msg) => return Ok(msg),
             Err(DiscordError::RateLimited { retry_after_secs }) => {
-                if attempt >= 3 {
+                if attempt >= 3 || retry_after_secs > MAX_INLINE_RETRY_AFTER_SECS {
                     return Err(DiscordError::RateLimited { retry_after_secs });
                 }
                 warn!(

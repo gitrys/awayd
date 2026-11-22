@@ -16,6 +16,7 @@ pub fn apply_steam_status(online: bool) -> BackendOutcome {
             return BackendOutcome::Failed {
                 error: format!("steam process check: {e}"),
                 permanent: false,
+                retry_after: None,
             }
         }
     }
@@ -24,6 +25,7 @@ pub fn apply_steam_status(online: bool) -> BackendOutcome {
         Err(e) => BackendOutcome::Failed {
             error: e,
             permanent: false,
+            retry_after: None,
         },
     }
 }

@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-user WMI polling quota (e.g. Logitech G HUB with many running processes): awayd now
   compares process snapshots every 2 s instead of a WMI subscription, which failed with
   `0x8004106C` and logged a warning every 10 s. The `wmi` dependency is gone.
+- A Discord rate limit no longer blocks awayd: a `Retry-After` longer than 5 s is not waited
+  for inside the apply (overrides, "Apply now", resume and quit used to hang for that time,
+  up to three times). Discord is held back until the given time while the other services
+  keep working, the status shows "next attempt at …", and Discord is no longer retried on
+  awayd's own 30–120 s backoff during the rate limit.
 
 ### Changed
 
