@@ -20,7 +20,7 @@ use crate::widgets::searchable_picker::SearchablePicker;
 use crate::widgets::subdiv_labels::{format_subdiv_label, subdiv_options_for_country};
 use crate::widgets::weekday_schedule_grid::{show_weekday_schedule_grid, WeekdayScheduleGridState};
 use crate::zoom_preview;
-use awayd_core::schedule::{normalize_schedule, schedule_days, validate_schedule};
+use awayd_core::schedule::{normalize_schedule, schedule_days};
 
 const TOKEN_STORED_PLACEHOLDER: &str = "••••••••••••";
 const STATUS_SLOT_H: f32 = 24.0;
@@ -978,8 +978,10 @@ impl AwaydSettingsApp {
         }
         self.config.schedule.days = Some(self.schedule_grid.commit_days_for_save());
         normalize_schedule(&mut self.config.schedule);
-        if let Err(e) = validate_schedule(&self.config.schedule) {
-            self.set_status_error(e);
+        // Same validation as the daemon and `awayctl validate`; also guards the offline path,
+        // which writes config.toml directly without the daemon's check.
+        if let Err(e) = awayd_core::config::validate_app_config(&self.config) {
+            self.set_status_error(format!("Not saved: {e}"));
             return;
         }
         self.config.mode.kind = "schedule".to_string();

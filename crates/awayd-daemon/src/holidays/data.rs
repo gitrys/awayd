@@ -294,13 +294,14 @@ pub fn year_range_in_file(country: &str) -> Option<(i32, i32)> {
     Some((a, b))
 }
 
-/// Warnings when the active holiday layer may not cover the scheduling horizon (`year` + `year+1`).
-pub fn holiday_coverage_warnings(country: &str) -> Vec<String> {
+/// Warnings when the holiday data may not cover the scheduling horizon (`year` + `year+1`).
+/// A missing year otherwise yields an empty holiday set without any notice.
+pub fn holiday_coverage_warnings(country: &str, year: i32) -> Vec<String> {
     let country = country.trim();
     if country.is_empty() {
         return vec!["schedule.country is empty; no holiday layer checked".to_string()];
     }
-    let y = chrono::Utc::now().date_naive().year();
+    let y = year;
     let y_next = y + 1;
     let Some((_, src)) = resolve_country_bytes(country) else {
         return vec![format!(
@@ -316,12 +317,12 @@ pub fn holiday_coverage_warnings(country: &str) -> Vec<String> {
     let mut out = Vec::new();
     if y < min_y || y > max_y {
         out.push(format!(
-            "holiday data for {country} ({src:?}) may not cover current calendar year {y} (file years {min_y}..{max_y})"
+            "holiday data for {country} ({src:?}) does not cover {y} (file years {min_y}..{max_y}); public holidays in {y} are ignored until the data is refreshed"
         ));
     }
     if y_next > max_y {
         out.push(format!(
-            "holiday data for {country} ({src:?}) may not cover next year {y_next}; schedule merges year+year+1 (file max {max_y})"
+            "holiday data for {country} ({src:?}) does not cover {y_next} (file max {max_y}); holidays early in {y_next} are ignored until the data is refreshed"
         ));
     }
     out
@@ -359,7 +360,11 @@ pub fn load_holidays_or_empty(
     year: i32,
 ) -> (HolidaySet, Option<String>) {
     match load_holiday_nearby_years(country, subdiv, year) {
-        Ok(set) => (set, None),
+        // Data present, but a missing year would silently yield no holidays: report it.
+        Ok(set) => {
+            let warnings = holiday_coverage_warnings(country, year);
+            (set, (!warnings.is_empty()).then(|| warnings.join("; ")))
+        }
         Err(e) => (
             HolidaySet::default(),
             Some(format!(

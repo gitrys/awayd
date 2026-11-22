@@ -1,36 +1,12 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 //! Build `work_window::Config` from persisted `AppConfig` + Discord token.
 
-use chrono::NaiveDate;
-
 use crate::work_window::{Config, ScheduleConfig};
-use awayd_core::config::schema::{AppConfig, VacationEntry};
-use awayd_core::schedule::{normalize_schedule, schedule_days, validate_schedule};
+use awayd_core::config::schema::AppConfig;
+use awayd_core::schedule::{normalize_schedule, schedule_days};
 
-pub fn vacation_ranges_from_entries(
-    entries: &[VacationEntry],
-) -> Result<Vec<(NaiveDate, NaiveDate)>, String> {
-    let mut out = Vec::new();
-    for e in entries {
-        let start =
-            NaiveDate::parse_from_str(&e.start, "%Y-%m-%d").map_err(|err| err.to_string())?;
-        let end = NaiveDate::parse_from_str(&e.end, "%Y-%m-%d").map_err(|err| err.to_string())?;
-        if start > end {
-            return Err(format!("vacation {}: start after end", e.id));
-        }
-        out.push((start, end));
-    }
-    Ok(out)
-}
-
-/// Reject invalid schedule fields before persisting or applying.
-pub fn validate_app_config(app: &AppConfig) -> Result<(), String> {
-    let mut schedule = app.schedule.clone();
-    normalize_schedule(&mut schedule);
-    validate_schedule(&schedule)?;
-    let _ = vacation_ranges_from_entries(&app.schedule.vacations)?;
-    Ok(())
-}
+// Shared with `awayctl validate` and the settings window (one validation for all writers).
+pub use awayd_core::config::{vacation_ranges_from_entries, validate_app_config};
 
 pub fn build_config(app: &AppConfig, discord_token: &str) -> Result<Config, String> {
     let mut schedule = app.schedule.clone();

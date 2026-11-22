@@ -46,3 +46,13 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 - **Tray error state:** break `config.toml` while awayd runs and trigger a tick (Apply now) →
   amber error icon, tooltip "awayd — error: …", menu "Error: status not applied (see Logs)".
   Without a Discord token the normal mode icon stays, tooltip adds "· warning: …".
+
+## 2026-11-22 – Fix plan 4 (validation, work-hours table, holiday coverage)
+
+- **Work-hours table:** Settings → "Use same hours for all active days", change Start to 08:00,
+  then tick "Use custom table" (or untick "Use same hours…") → the table and `config.toml` keep
+  08:00 for all active days.
+- **Invalid vacation:** with the daemon stopped, try to save a vacation whose end is before its
+  start → "Not saved: vacation …: start after end", `config.toml` unchanged.
+- **Holiday coverage:** a holiday file without the current/next year → status/tooltip warning
+  "does not cover <year>", status still applied.

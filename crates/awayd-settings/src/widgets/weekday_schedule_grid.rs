@@ -63,6 +63,30 @@ impl WeekdayScheduleGridState {
         out
     }
 
+    /// Switch between "same hours for all active days" and the per-day table. Unlinking first
+    /// copies the master times into the active rows; before, the table kept its old values and
+    /// the next (auto)save silently reverted a master edit.
+    pub fn set_linked(&mut self, linked: bool) {
+        if linked == self.linked {
+            return;
+        }
+        if linked {
+            self.linked = true;
+            self.sync_master_from_days();
+            return;
+        }
+        let (start, end) = self.master_times_from_fields();
+        for i in 0..7 {
+            if self.days[i].enabled {
+                self.days[i].start = start;
+                self.days[i].end = end;
+                self.row_start[i].sync_from_time(start);
+                self.row_end[i].sync_from_time(end);
+            }
+        }
+        self.linked = false;
+    }
+
     fn master_times_from_fields(&self) -> (NaiveTime, NaiveTime) {
         let start = parse_time_edit(&self.master_start.edit).unwrap_or_else(default_start);
         let end = parse_time_edit(&self.master_end.edit).unwrap_or_else(default_end);
@@ -117,14 +141,13 @@ pub fn show_weekday_schedule_grid(
 
     ui.label("Work hours by day");
 
+    let mut linked = state.linked;
     if ui
-        .checkbox(&mut state.linked, "Use same hours for all active days")
+        .checkbox(&mut linked, "Use same hours for all active days")
         .changed()
     {
         changed = true;
-        if state.linked {
-            state.sync_master_from_days();
-        }
+        state.set_linked(linked);
     }
 
     ui.horizontal(|ui| {
@@ -157,13 +180,7 @@ pub fn show_weekday_schedule_grid(
     let mut custom = !state.linked;
     if ui.checkbox(&mut custom, "Use custom table").changed() {
         changed = true;
-        state.linked = !custom;
-        if state.linked {
-            state.sync_master_from_days();
-        }
-    }
-    if !state.linked && !custom {
-        state.linked = true;
+        state.set_linked(!custom);
     }
 
     egui::Grid::new(format!("{id_source}_grid"))
@@ -253,6 +270,38 @@ mod tests {
             NaiveTime::from_hms_opt(10, 30, 0).unwrap()
         );
         assert_eq!(committed[0].end, NaiveTime::from_hms_opt(17, 0, 0).unwrap());
+    }
+
+    /// Ticket scenario: change the master start in linked mode, then switch to the custom
+    /// table. The saved days and the table rows must keep the new time.
+    #[test]
+    fn unlinking_keeps_master_edit() {
+        let mut state = WeekdayScheduleGridState::from_days(&default_week_days());
+        assert!(state.linked);
+        state.master_start.edit = "08:00".to_string();
+
+        state.set_linked(false);
+
+        let eight = NaiveTime::from_hms_opt(8, 0, 0).unwrap();
+        let committed = state.commit_days_for_save();
+        for i in 0..5 {
+            assert_eq!(committed[i].start, eight, "weekday {i}");
+            assert_eq!(state.days[i].start, eight);
+            assert_eq!(state.row_start[i].edit, "08:00");
+        }
+        // Disabled days keep their own times.
+        assert_eq!(committed[6].start, default_week_days()[6].start);
+    }
+
+    #[test]
+    fn relinking_takes_master_from_rows() {
+        let mut days = default_week_days();
+        days[0].start = NaiveTime::from_hms_opt(7, 30, 0).unwrap();
+        let mut state = WeekdayScheduleGridState::from_days(&days);
+        assert!(!state.linked);
+        state.set_linked(true);
+        assert!(state.linked);
+        assert_eq!(state.master_start.edit, "07:30");
     }
 
     #[test]

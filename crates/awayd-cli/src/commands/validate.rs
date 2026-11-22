@@ -3,11 +3,13 @@
 use anyhow::Result;
 use awayd_core::config;
 use awayd_core::config::paths;
-use awayd_core::schedule::validate_schedule;
 
+/// Same checks as the daemon applies (schedule and vacations), so "config OK" means the
+/// daemon will accept the file. Errors end with exit code 1.
 pub fn validate() -> Result<()> {
-    let cfg = config::load_config(&paths::config_file())?;
-    validate_schedule(&cfg.schedule).map_err(|e| anyhow::anyhow!(e))?;
+    let path = paths::config_file();
+    let cfg = config::load_config(&path)?;
+    config::validate_app_config(&cfg).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     println!("config OK");
     Ok(())
 }

@@ -34,6 +34,35 @@ pub fn parse_config(raw: &str) -> Result<AppConfig> {
     Ok(c)
 }
 
+/// Parse vacation entries into inclusive date ranges; rejects invalid dates and start > end.
+pub fn vacation_ranges_from_entries(
+    entries: &[schema::VacationEntry],
+) -> std::result::Result<Vec<(chrono::NaiveDate, chrono::NaiveDate)>, String> {
+    let mut out = Vec::new();
+    for e in entries {
+        let start = chrono::NaiveDate::parse_from_str(&e.start, "%Y-%m-%d")
+            .map_err(|err| format!("vacation {}: start {:?}: {err}", e.id, e.start))?;
+        let end = chrono::NaiveDate::parse_from_str(&e.end, "%Y-%m-%d")
+            .map_err(|err| format!("vacation {}: end {:?}: {err}", e.id, e.end))?;
+        if start > end {
+            return Err(format!("vacation {}: start after end", e.id));
+        }
+        out.push((start, end));
+    }
+    Ok(out)
+}
+
+/// The one validation for a config the daemon will apply: used by the daemon (tick and
+/// `set_config_toml`), `awayctl validate` and the settings window before saving, so all of
+/// them accept and reject the same files.
+pub fn validate_app_config(app: &AppConfig) -> std::result::Result<(), String> {
+    let mut sched = app.schedule.clone();
+    schedule::normalize_schedule(&mut sched);
+    schedule::validate_schedule(&sched)?;
+    vacation_ranges_from_entries(&app.schedule.vacations)?;
+    Ok(())
+}
+
 pub fn save_config(path: &Path, cfg: &AppConfig) -> Result<()> {
     let raw = toml::to_string_pretty(cfg).context("serialize config")?;
     atomic_fs::atomic_write(path, raw.as_bytes())?;
@@ -61,4 +90,44 @@ pub fn save_state(path: &Path, st: &AppState) -> Result<()> {
     let raw = serde_json::to_string_pretty(st)?;
     atomic_fs::atomic_write(path, raw.as_bytes())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schema::VacationEntry;
+
+    fn with_vacation(start: &str, end: &str) -> AppConfig {
+        let mut c = AppConfig::default();
+        c.schedule.vacations = vec![VacationEntry {
+            id: "v0".into(),
+            label: "Test".into(),
+            start: start.into(),
+            end: end.into(),
+            comment: String::new(),
+        }];
+        c
+    }
+
+    #[test]
+    fn default_config_is_valid() {
+        assert_eq!(validate_app_config(&AppConfig::default()), Ok(()));
+        assert_eq!(
+            validate_app_config(&with_vacation("2026-12-20", "2026-12-28")),
+            Ok(())
+        );
+    }
+
+    /// `awayctl validate` used to accept this while the daemon rejected it.
+    #[test]
+    fn reversed_vacation_is_rejected() {
+        let err = validate_app_config(&with_vacation("2026-12-28", "2026-12-20")).unwrap_err();
+        assert!(err.contains("start after end"), "{err}");
+    }
+
+    #[test]
+    fn invalid_vacation_date_is_rejected() {
+        let err = validate_app_config(&with_vacation("2026-13-01", "2026-12-28")).unwrap_err();
+        assert!(err.contains("v0") && err.contains("2026-13-01"), "{err}");
+    }
 }
