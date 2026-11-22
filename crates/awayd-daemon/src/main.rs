@@ -15,8 +15,23 @@ fn main() {
         eprintln!("awayd logging init failed: {e:#}");
     }
     if !acquire_single_instance() {
+        tracing::info!(
+            target: "awayd::lifecycle",
+            pid = std::process::id(),
+            "another awayd instance is running; exiting"
+        );
         return;
     }
+    // Restarts and crashes become visible in the log: every start logs this line, every
+    // orderly end "awayd stopping".
+    tracing::info!(
+        target: "awayd::lifecycle",
+        version = awayd_core::VERSION,
+        pid = std::process::id(),
+        portable = awayd_core::config::paths::is_portable(),
+        config = %awayd_core::config::paths::config_file().display(),
+        "awayd started"
+    );
     let handle = match setup() {
         Ok(h) => h,
         Err(e) => {
@@ -49,8 +64,10 @@ fn main() {
 
     if let Err(e) = tray::run_tray(service, status_rx, rt_handle) {
         eprintln!("awayd tray: {e:#}");
+        tracing::error!(target: "awayd::lifecycle", error = %format!("{e:#}"), "tray failed");
     }
-    shutdown.notify_waiters();
+    tracing::info!(target: "awayd::lifecycle", "awayd stopping (tray ended)");
+    shutdown.cancel();
     let _ = backend.join();
 }
 

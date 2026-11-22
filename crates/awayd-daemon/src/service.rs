@@ -30,7 +30,7 @@ pub struct SchedulerService {
     pub status: Arc<RwLock<StatusCache>>,
     pub config_toml: Arc<RwLock<String>>,
     pub poke: Arc<PokeGate>,
-    pub shutdown: Arc<tokio::sync::Notify>,
+    pub shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl SchedulerService {
@@ -254,7 +254,9 @@ impl SchedulerApi for SchedulerService {
     }
 
     fn quit(&self) {
-        tracing::info!(target: "awayd::api", "Quit requested");
-        self.shutdown.notify_waiters();
+        // Counterpart of "awayd started": a start without a preceding "stopping" means the
+        // previous process crashed or was killed.
+        tracing::info!(target: "awayd::lifecycle", "awayd stopping (quit requested)");
+        self.shutdown.cancel();
     }
 }

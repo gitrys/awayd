@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use awayd_core::config::paths;
 
 use super::data::{self, clear_holiday_cache, HolidayFile};
+use super::nager::types::PublicHoliday;
 use super::nager::{build_holiday_file, fetch_public_holidays_blocking};
 
 const REFRESH_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -66,8 +67,30 @@ pub fn ensure_country_sync(country: &str) -> Result<(), String> {
     sync_country(country, false)
 }
 
-/// Download unless the cache is fresh (or always with `force`). The existing file is only
-/// replaced (atomically) after every year was fetched; on error it stays untouched.
+/// Pause before the single retry of a failed year.
+const YEAR_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+/// One year from Nager, retried once (a transient network error must not cost the year).
+fn fetch_year(year: i32, country: &str) -> Result<Vec<PublicHoliday>, String> {
+    fetch_public_holidays_blocking(year, country).or_else(|first| {
+        std::thread::sleep(YEAR_RETRY_DELAY);
+        fetch_public_holidays_blocking(year, country)
+            .map_err(|e| format!("{e} (retried; first attempt: {first})"))
+    })
+}
+
+/// Years the schedule needs (holiday coverage of this and the next year); the others in
+/// [`year_window`] are optional.
+fn required_years(now: chrono::DateTime<Utc>) -> [i32; 2] {
+    let y = now.date_naive().year();
+    [y, y + 1]
+}
+
+/// Download unless the cache is fresh (or always with `force`).
+///
+/// Years are fetched one by one. A missing required year (this or next) is an error and the
+/// existing file stays untouched. A missing optional year is logged and taken from the
+/// previous file if it had it; before, a single missing year discarded all others.
 fn sync_country(country: &str, force: bool) -> Result<(), String> {
     let country = country.trim();
     if country.is_empty() {
@@ -81,12 +104,34 @@ fn sync_country(country: &str, force: bool) -> Result<(), String> {
 
     let now = Utc::now();
     let (y0, y1) = year_window(now);
-    let mut years: Vec<(i32, Vec<super::nager::types::PublicHoliday>)> = Vec::new();
+    let required = required_years(now);
+    let mut years: Vec<(i32, Vec<PublicHoliday>)> = Vec::new();
+    let mut missing: Vec<i32> = Vec::new();
     for y in y0..=y1 {
-        let holidays = fetch_public_holidays_blocking(y, country)?;
-        years.push((y, holidays));
+        match fetch_year(y, country) {
+            Ok(holidays) => years.push((y, holidays)),
+            Err(e) if required.contains(&y) => return Err(e),
+            Err(e) => {
+                tracing::warn!(
+                    target: "awayd::holidays",
+                    country,
+                    year = y,
+                    error = %e,
+                    "holiday data for an optional year not available; keeping previous data if any"
+                );
+                missing.push(y);
+            }
+        }
     }
-    let file = build_holiday_file(country, &years);
+    let mut file = build_holiday_file(country, &years);
+    if !missing.is_empty() {
+        if let Some(previous) = std::fs::read(&path)
+            .ok()
+            .and_then(|raw| data::parse_holiday_file(&raw).ok())
+        {
+            keep_previous_years(&mut file, &previous, &missing);
+        }
+    }
     write_holiday_file(&path, &file)?;
     clear_holiday_cache();
     tracing::info!(
@@ -135,6 +180,20 @@ pub fn refresh_country_sync(country: &str) -> Result<(), String> {
 pub async fn refresh_country(country: &str) -> Result<(), String> {
     let country = country.to_string();
     off_runtime(move || refresh_country_sync(&country)).await
+}
+
+/// Copy `years` from `previous` into `file` (where present) and update the year range.
+fn keep_previous_years(file: &mut HolidayFile, previous: &HolidayFile, years: &[i32]) {
+    for y in years {
+        let key = y.to_string();
+        if let Some(entry) = previous.by_year.get(&key) {
+            file.by_year.insert(key, entry.clone());
+        }
+    }
+    let mut keys: Vec<i32> = file.by_year.keys().filter_map(|k| k.parse().ok()).collect();
+    keys.sort_unstable();
+    file.year_min = keys.first().copied();
+    file.year_max = keys.last().copied();
 }
 
 fn write_holiday_file(path: &Path, file: &HolidayFile) -> Result<(), String> {

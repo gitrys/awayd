@@ -36,12 +36,15 @@ pub trait SchedulerApi: Send + Sync {
     fn quit(&self);
 }
 
-pub async fn run_pipe_server(api: Arc<dyn SchedulerApi>, shutdown: Arc<tokio::sync::Notify>) {
+pub async fn run_pipe_server(
+    api: Arc<dyn SchedulerApi>,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
     let mut server = create_pipe().expect("create initial pipe");
     loop {
         tokio::select! {
             biased;
-            _ = shutdown.notified() => break,
+            _ = shutdown.cancelled() => break,
             res = server.connect() => {
                 if let Err(e) = res {
                     warn!(target: "awayd::ipc", "pipe connect: {e}");

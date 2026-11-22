@@ -31,8 +31,16 @@ pub struct TailReader {
     next_older_idx: usize,
     /// Byte offset in `file_chain[0]` for incremental tail.
     tail_offset: u64,
+    /// Start of the first line of the active file as read (identifies the file: after a
+    /// rotation `awayd.log` starts with another line, even when it is already longer than
+    /// `tail_offset`). File creation times are no help: Windows file tunneling gives a file
+    /// re-created under the same name the old creation time.
+    head: Vec<u8>,
     pub entries: Vec<LogEntry>,
 }
+
+/// Bytes of the first line kept in [`TailReader::head`] (the timestamp makes it unique).
+const HEAD_BYTES: usize = 256;
 
 impl TailReader {
     pub fn new(logs_dir: PathBuf) -> Self {
@@ -42,8 +50,26 @@ impl TailReader {
             file_chain,
             next_older_idx: 1,
             tail_offset: 0,
+            head: Vec::new(),
             entries: Vec::new(),
         }
+    }
+
+    /// Start over with the (new) active file.
+    fn reset_after_rotation(&mut self) {
+        self.tail_offset = 0;
+        self.head.clear();
+        self.entries.clear();
+        self.next_older_idx = 1;
+    }
+
+    /// The active file still starts with the line read before.
+    fn same_file(&self, f: &mut File) -> bool {
+        if self.head.is_empty() {
+            return true;
+        }
+        let mut start = vec![0u8; self.head.len()];
+        f.seek(SeekFrom::Start(0)).is_ok() && f.read_exact(&mut start).is_ok() && start == self.head
     }
 
     pub fn refresh_chain(&mut self) {
@@ -67,13 +93,14 @@ impl TailReader {
             return 0;
         };
         let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-        if len < self.tail_offset {
-            self.tail_offset = 0;
-            self.entries.clear();
+        // Rotated: shorter than what was read, or another first line.
+        if len < self.tail_offset || !self.same_file(&mut f) {
+            self.reset_after_rotation();
         }
         if len <= self.tail_offset {
             return 0;
         }
+        let from_start = self.tail_offset == 0;
         let _ = f.seek(SeekFrom::Start(self.tail_offset));
         let to_read = (len - self.tail_offset) as usize;
         let mut buf = vec![0u8; to_read.min(256 * 1024)];
@@ -92,6 +119,10 @@ impl TailReader {
                 self.tail_offset -= n as u64;
                 return 0;
             }
+        }
+        if from_start {
+            let first_line = buf.iter().position(|&b| b == b'\n').unwrap_or(buf.len());
+            self.head = buf[..first_line.min(HEAD_BYTES)].to_vec();
         }
         let parsed = parse_log_bytes(&buf);
         let count = parsed.len();
@@ -187,5 +218,63 @@ mod tests {
         assert_eq!(tail.entries.len(), 2);
         assert_eq!(tail.entries[0].message, "old");
         assert_eq!(tail.entries[1].message, "new");
+    }
+
+    fn line(msg: &str) -> String {
+        format!(
+            r#"{{"v":1,"ts":"2026-11-22T20:00:00.000+01:00","level":"INFO","target":"t","message":"{msg}"}}"#
+        )
+    }
+
+    fn write_lines(path: &std::path::Path, msgs: &[&str]) {
+        use std::io::Write;
+        let mut f = std::fs::File::create(path).unwrap();
+        for m in msgs {
+            writeln!(f, "{}", line(m)).unwrap();
+        }
+    }
+
+    /// The new `awayd.log` is already longer than the old read position at the next poll:
+    /// detected by its first line, all its lines are read, nothing from the middle.
+    #[test]
+    fn rotation_is_detected_when_new_file_is_already_longer() {
+        let dir = tempdir().unwrap();
+        let active = dir.path().join("awayd.log");
+        write_lines(&active, &["old-1", "old-2"]);
+
+        let mut tail = TailReader::new(dir.path().to_path_buf());
+        assert_eq!(tail.poll_tail(), 2);
+
+        std::fs::rename(&active, dir.path().join("awayd.log.1")).unwrap();
+        let new: Vec<String> = (1..=6).map(|i| format!("new-{i}")).collect();
+        let refs: Vec<&str> = new.iter().map(String::as_str).collect();
+        write_lines(&active, &refs);
+
+        tail.poll_tail();
+        let msgs: Vec<&str> = tail.entries.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(msgs, refs);
+        // "Load older" starts again with the file rotated just now.
+        assert_eq!(tail.prepend_older_chunk(), 2);
+        assert_eq!(tail.entries[0].message, "old-1");
+    }
+
+    #[test]
+    fn appended_lines_are_not_mistaken_for_rotation() {
+        let dir = tempdir().unwrap();
+        let active = dir.path().join("awayd.log");
+        write_lines(&active, &["a"]);
+        let mut tail = TailReader::new(dir.path().to_path_buf());
+        assert_eq!(tail.poll_tail(), 1);
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&active)
+                .unwrap();
+            writeln!(f, "{}", line("b")).unwrap();
+        }
+        assert_eq!(tail.poll_tail(), 1);
+        let msgs: Vec<&str> = tail.entries.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(msgs, ["a", "b"]);
     }
 }

@@ -14,7 +14,8 @@ use awayd_core::status::{
 };
 use chrono::{DateTime, Datelike, Local};
 use tokio::sync::mpsc;
-use tokio::sync::{watch, Notify, RwLock};
+use tokio::sync::{watch, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use crate::apply::{
     apply_presence, build_backend, ApplyPlan, ApplyResult, Backend, BackendOutcome,
@@ -475,13 +476,14 @@ async fn run_one_tick(
     }
 }
 
-/// Drive apply + status updates until [`Notify`] fires.
+/// Drive apply + status updates until `shutdown` is cancelled (a cancel during a tick is not
+/// lost: the token keeps its state and is seen once the tick returns).
 pub async fn run(
     status: Arc<RwLock<StatusCache>>,
     config_toml: Arc<RwLock<String>>,
     poke_gate: Arc<PokeGate>,
     mut poke_rx: mpsc::Receiver<()>,
-    shutdown: Arc<Notify>,
+    shutdown: CancellationToken,
     status_tx: watch::Sender<String>,
 ) -> anyhow::Result<()> {
     let cfg_path = paths::config_file();
@@ -506,7 +508,7 @@ pub async fn run(
     loop {
         tokio::select! {
             biased;
-            _ = shutdown.notified() => {
+            _ = shutdown.cancelled() => {
                 tracing::info!(target: "awayd::scheduler", "scheduler stopped");
                 return Ok(());
             }
@@ -856,5 +858,16 @@ mod tests {
         );
         assert!(waiting_messages(&a, &b, after, local).is_empty());
         assert!(a["chat"].waiting.is_none());
+    }
+
+    /// The reason for `CancellationToken` (legacy issue 12): a shutdown signalled while the
+    /// loop is busy in a tick (nobody waiting) must still be seen at the next wait;
+    /// `Notify::notify_waiters` lost it.
+    #[tokio::test]
+    async fn shutdown_signalled_before_waiting_is_not_lost() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let seen = tokio::time::timeout(Duration::from_secs(1), token.cancelled()).await;
+        assert!(seen.is_ok());
     }
 }

@@ -6,7 +6,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use awayd_core::config::{self, paths};
 use awayd_ipc::{run_pipe_server, SchedulerApi};
-use tokio::sync::{mpsc, watch, Notify, RwLock};
+use tokio::sync::{mpsc, watch, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use crate::platform::windows::{power, process_watch};
 use crate::service::{SchedulerService, StatusCache};
@@ -20,7 +21,7 @@ pub struct AgentHandle {
     pub status_rx: watch::Receiver<String>,
     pub status_tx: watch::Sender<String>,
     pub poke_rx: mpsc::Receiver<()>,
-    pub shutdown: Arc<Notify>,
+    pub shutdown: CancellationToken,
 }
 
 pub fn setup() -> Result<AgentHandle> {
@@ -33,7 +34,7 @@ pub fn setup() -> Result<AgentHandle> {
 
     let status = Arc::new(RwLock::new(StatusCache::default()));
     let config_toml = Arc::new(RwLock::new(cfg_text));
-    let shutdown = Arc::new(Notify::new());
+    let shutdown = CancellationToken::new();
     let (status_tx, status_rx) = watch::channel(String::new());
 
     let (poke_tx, poke_rx) = mpsc::channel::<()>(64);
@@ -101,7 +102,7 @@ pub async fn run_backend(handle: AgentHandle) -> Result<()> {
         .await
     });
 
-    shutdown.notified().await;
+    shutdown.cancelled().await;
     let _ = sched.await;
     Ok(())
 }

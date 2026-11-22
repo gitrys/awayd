@@ -48,6 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   up to three times). Discord is held back until the given time while the other services
   keep working, the status shows "next attempt at …", and Discord is no longer retried on
   awayd's own 30–120 s backoff during the rate limit.
+- Quitting is no longer lost when it arrives while a status change is being applied (the
+  process could stay without tray icon and block a new start).
+- Holiday download: a year Nager.Date does not deliver no longer discards all other years.
+  Only this and next year are required; a missing other year is logged and kept from the
+  previous data. Each year is retried once.
+- The log records "awayd started" (version, PID, portable mode, config path) and "awayd
+  stopping", so restarts and crashes are visible; a second instance logs that it exits.
+- The settings log view no longer misses or garbles lines when the log rotates and the new
+  file is already larger than the old read position.
 
 ### Changed
 
