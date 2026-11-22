@@ -38,12 +38,16 @@ cargo build --release
 
 ## Autostart
 
-One `HKCU\Run` entry starts `awayd.exe` at login (no admin):
+One `HKCU\Run` entry (value `awayd`, quoted path) starts `awayd.exe` at login (no admin).
+Toggle it in **Settings → Scheduler → Start awayd at login**, or from the command line:
 
 ```powershell
 awayctl.exe install-autostart
 awayctl.exe uninstall-autostart
 ```
+
+The settings window also shows when the entry points to another folder (e.g. after moving the
+portable folder) or uses the old unquoted format, and offers to fix it.
 
 ## CLI
 

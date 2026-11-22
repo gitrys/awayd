@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use awayd_core::status::{LastApplyRecord, StatusSnapshot, STATUS_SCHEMA_VERSION};
+use awayd_core::status::{LastApplyRecord, StatusSnapshot, SOURCE_ERROR, STATUS_SCHEMA_VERSION};
 use chrono::{DateTime, Datelike, Local};
 use tokio::sync::mpsc;
 use tokio::sync::{watch, Notify, RwLock};
@@ -279,11 +279,13 @@ async fn run_one_tick(
         Ok(dur) => dur,
         Err(e) => {
             tracing::error!(target: "awayd::scheduler", "tick error: {e:#}");
+            // `source = "error"`: the tray must not show the normal "online" state when
+            // nothing was applied.
             let body = StatusSnapshot {
                 ok: false,
                 schema: STATUS_SCHEMA_VERSION,
                 work_mode: false,
-                source: "schedule".into(),
+                source: SOURCE_ERROR.into(),
                 mode_kind: "schedule".into(),
                 next_wake: None,
                 last_apply: None,
@@ -295,7 +297,7 @@ async fn run_one_tick(
                     status_tx,
                     j,
                     false,
-                    "schedule".into(),
+                    SOURCE_ERROR.into(),
                     String::new(),
                 )
                 .await;

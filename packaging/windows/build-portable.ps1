@@ -4,6 +4,11 @@ $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $Root
 
 cargo build --release
+# $ErrorActionPreference does not apply to native exit codes: without this check a failed
+# build would copy the previous binaries from target\release and report success.
+if ($LASTEXITCODE -ne 0) {
+    throw "cargo build failed (exit code $LASTEXITCODE); portable bundle not updated"
+}
 
 $Dist = Join-Path $Root "dist\awayd-portable"
 New-Item -ItemType Directory -Force -Path $Dist, (Join-Path $Dist "config"), (Join-Path $Dist "data\icons") | Out-Null

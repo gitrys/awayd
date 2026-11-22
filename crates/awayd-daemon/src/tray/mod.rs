@@ -29,12 +29,7 @@ fn pump_win32_messages() {
 
 fn apply_status_ui(tray: &tray_icon::TrayIcon, tray_menu: &menu::TrayMenu, s: &StatusSnapshot) {
     tray_menu.refresh_status_lines(s);
-    let title = format!(
-        "awayd — {} ({})",
-        if s.work_mode { "work" } else { "off" },
-        s.source
-    );
-    let _ = tray.set_tooltip(Some(&title));
+    let _ = tray.set_tooltip(Some(&menu::tooltip_text(s)));
     let _ = tray.set_icon(Some(icon::icon_for_status(s)));
 }
 

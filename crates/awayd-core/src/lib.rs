@@ -2,6 +2,7 @@
 //! Shared types and config for awayd (Windows).
 
 pub mod atomic_fs;
+pub mod autostart;
 pub mod config;
 pub mod launch;
 pub mod log;

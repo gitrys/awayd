@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use awayd_core::autostart::{self, AutostartState};
 use awayd_core::config::paths;
 use awayd_core::config::schema::{AppConfig, VacationEntry};
 use chrono::{Datelike, NaiveDate};
@@ -115,6 +116,8 @@ pub struct AwaydSettingsApp {
     /// Set when an existing `config.toml` could not be read; blocks saving so the shown
     /// defaults never overwrite the real file.
     config_error: Option<String>,
+    /// Login autostart entry as last read from the registry (`Err` = could not be read).
+    autostart_state: Result<AutostartState, String>,
 }
 
 /// Decide which config the UI may edit.
@@ -133,6 +136,11 @@ fn resolve_loaded_config(
     awayd_core::config::parse_config(&raw)
         .map(Some)
         .map_err(|e| format!("{e:#}"))
+}
+
+/// The daemon executable next to this settings binary (same lookup as `awayctl`).
+fn awayd_exe() -> std::path::PathBuf {
+    awayd_core::launch::resolve_awayd_binary("awayd")
 }
 
 enum ConfigErrorAction {
@@ -196,6 +204,7 @@ impl AwaydSettingsApp {
             log_view: None,
             log_popout_open: false,
             config_error: None,
+            autostart_state: Ok(AutostartState::Off),
         };
         app.reload();
         app
@@ -815,8 +824,81 @@ impl AwaydSettingsApp {
         }
     }
 
+    fn refresh_autostart(&mut self) {
+        self.autostart_state = autostart::state(&awayd_exe()).map_err(|e| format!("{e:#}"));
+    }
+
+    /// Register or remove the login autostart entry (GitHub issue 1) and report the result.
+    fn set_autostart(&mut self, on: bool) {
+        let result = if on {
+            autostart::install(&awayd_exe()).map(|()| "Autostart enabled")
+        } else {
+            autostart::uninstall().map(|removed| {
+                if removed {
+                    "Autostart disabled"
+                } else {
+                    "Autostart was not set"
+                }
+            })
+        };
+        match result {
+            Ok(msg) => self.set_status_success(msg),
+            Err(e) => self.set_status_error(format!("Autostart: {e:#}")),
+        }
+        self.refresh_autostart();
+    }
+
+    fn autostart_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Startup").strong());
+        let state = self.autostart_state.clone();
+        let state = match state {
+            Ok(s) => s,
+            Err(e) => {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    format!("Could not read the autostart entry: {e}"),
+                );
+                if ui.button("Retry").clicked() {
+                    self.refresh_autostart();
+                }
+                return;
+            }
+        };
+        let mut on = matches!(state, AutostartState::On { .. });
+        if ui
+            .checkbox(&mut on, "Start awayd at login")
+            .on_hover_text("Adds or removes the value \"awayd\" under HKCU\\…\\CurrentVersion\\Run")
+            .changed()
+        {
+            self.set_autostart(on);
+        }
+        match state {
+            AutostartState::On { quoted: false } => {
+                ui.horizontal(|ui| {
+                    ui.label("The entry uses an older format (path without quotes).");
+                    if ui.button("Repair").clicked() {
+                        self.set_autostart(true);
+                    }
+                });
+            }
+            AutostartState::Elsewhere(path) => {
+                ui.label(format!("The login entry starts another file: {path}"));
+                ui.horizontal(|ui| {
+                    if ui.button("Use this awayd.exe").clicked() {
+                        self.set_autostart(true);
+                    }
+                    if ui.button("Remove entry").clicked() {
+                        self.set_autostart(false);
+                    }
+                });
+            }
+            AutostartState::Off | AutostartState::On { quoted: true } => {}
+        }
+    }
+
     fn reload(&mut self) {
         self.daemon_ok = self.rt.block_on(self.ipc.ping());
+        self.refresh_autostart();
         // Always read config.toml from disk: the daemon's copy is only refreshed by a
         // successful tick, so after a manual edit it can still hold the old valid config and
         // an unreadable file would go unnoticed (and be overwritten on the next save).
@@ -1003,6 +1085,8 @@ impl eframe::App for AwaydSettingsApp {
                                 self.wizard = true;
                                 self.wizard_step = 0;
                             }
+                            ui.separator();
+                            self.autostart_ui(ui);
                         });
                     }
                     SettingsTab::Display => {

@@ -36,3 +36,13 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
   is applied again. Remove the token → Discord `presence skipped`, no retries.
 - **WMI query with two names:** after a reboot, `cargo test -p awayd-daemon --lib typed_event`
   (local WMI quota was exhausted on 2026-11-22, see commit 42c832a).
+
+## 2026-11-22 – Fix plan 3 (autostart toggle, tray error state, build script)
+
+- **Autostart toggle (GitHub #1):** Settings → Scheduler → "Start awayd at login": tick → value
+  `awayd` in `HKCU\…\Run` with a quoted path; untick → removed, message "Autostart disabled".
+  Point the value at another path by hand → settings shows "starts another file" with
+  "Use this awayd.exe" / "Remove entry". Log off/on → awayd starts (also from a path with spaces).
+- **Tray error state:** break `config.toml` while awayd runs and trigger a tick (Apply now) →
+  amber error icon, tooltip "awayd — error: …", menu "Error: status not applied (see Logs)".
+  Without a Discord token the normal mode icon stays, tooltip adds "· warning: …".

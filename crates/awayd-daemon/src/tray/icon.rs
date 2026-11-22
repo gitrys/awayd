@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use awayd_core::config::paths;
-use awayd_core::status::StatusSnapshot;
+use awayd_core::status::{StatusSnapshot, SOURCE_ERROR};
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg;
 use tray_icon::Icon;
@@ -18,31 +18,43 @@ const SVG_OVERRIDE_ONLINE: &str =
     include_str!("../../../../data/icons/awayd-tray-grid-override-online.svg");
 const SVG_OVERRIDE_INVISIBLE: &str =
     include_str!("../../../../data/icons/awayd-tray-grid-override-invisible.svg");
+const SVG_ERROR: &str = include_str!("../../../../data/icons/awayd-tray-grid-error.svg");
 
-const ICON_FILES: [&str; 4] = [
+const ICON_FILES: [&str; 5] = [
     "awayd-tray-grid.svg",
     "awayd-tray-grid-invisible.svg",
     "awayd-tray-grid-override-online.svg",
     "awayd-tray-grid-override-invisible.svg",
+    "awayd-tray-grid-error.svg",
 ];
 
-const ICON_EMBED: [&str; 4] = [
+const ICON_EMBED: [&str; 5] = [
     SVG_ONLINE,
     SVG_INVISIBLE,
     SVG_OVERRIDE_ONLINE,
     SVG_OVERRIDE_INVISIBLE,
+    SVG_ERROR,
 ];
 
-static RGBA_CACHE: OnceLock<[Vec<u8>; 4]> = OnceLock::new();
+const ICON_ERROR: usize = 4;
+
+static RGBA_CACHE: OnceLock<[Vec<u8>; 5]> = OnceLock::new();
 
 pub fn icon_off() -> Icon {
     icon_from_index(0)
 }
 
 pub fn icon_for_status(s: &StatusSnapshot) -> Icon {
-    let override_active = s.source == "manual_override";
-    let idx = icon_index(s.work_mode, override_active);
-    icon_from_index(idx)
+    icon_from_index(icon_index_for(s))
+}
+
+/// Failed tick → error icon (it used to show the normal "online" icon); otherwise by
+/// mode and override. Warnings (`ok == false` after a successful tick) keep the mode icon.
+fn icon_index_for(s: &StatusSnapshot) -> usize {
+    if s.source == SOURCE_ERROR {
+        return ICON_ERROR;
+    }
+    icon_index(s.work_mode, s.source == "manual_override")
 }
 
 fn icon_index(work_mode: bool, override_active: bool) -> usize {
@@ -60,7 +72,7 @@ fn icon_from_index(idx: usize) -> Icon {
     Icon::from_rgba(rgba, TRAY_SIZE, TRAY_SIZE).expect("tray icon rgba")
 }
 
-fn init_rgba_cache() -> [Vec<u8>; 4] {
+fn init_rgba_cache() -> [Vec<u8>; 5] {
     std::array::from_fn(|i| load_icon_rgba(i))
 }
 
@@ -162,6 +174,43 @@ mod tests {
         let work = rasterize_svg(SVG_INVISIBLE).expect("invisible svg");
         let px = rgba_at(&work, STATUS_X, STATUS_Y);
         assert!(px[0] > px[1], "expected red-ish at status cell, got {px:?}");
+    }
+
+    fn snapshot(ok: bool, work_mode: bool, source: &str) -> StatusSnapshot {
+        StatusSnapshot {
+            ok,
+            work_mode,
+            source: source.into(),
+            ..StatusSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn failed_tick_uses_error_icon() {
+        assert_eq!(
+            icon_index_for(&snapshot(false, false, SOURCE_ERROR)),
+            ICON_ERROR
+        );
+    }
+
+    #[test]
+    fn warning_keeps_mode_icon() {
+        // ok == false after a successful tick (e.g. no Discord token): still the mode icon.
+        assert_eq!(icon_index_for(&snapshot(false, false, "schedule")), 0);
+        assert_eq!(icon_index_for(&snapshot(false, true, "schedule")), 1);
+        assert_eq!(icon_index_for(&snapshot(true, true, "manual_override")), 3);
+    }
+
+    #[test]
+    fn error_icon_is_amber_in_all_cells() {
+        let err = rasterize_svg(SVG_ERROR).expect("error svg");
+        for (x, y) in [(STATUS_X, STATUS_Y), (OVERRIDE_X, OVERRIDE_Y)] {
+            let px = rgba_at(&err, x, y);
+            assert!(
+                px[0] > px[2] && px[1] > px[2] && px[0] > px[1],
+                "expected amber at ({x},{y}), got {px:?}"
+            );
+        }
     }
 
     #[test]

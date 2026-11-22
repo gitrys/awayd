@@ -38,12 +38,16 @@ owners and are used here only to describe what the program works with.
 2. Start `awayd.exe`. A tray icon appears.
 3. Open **Settings** from the tray menu (or run `awayd-settings.exe`) and complete the wizard:
    country/region, work hours and, optionally, the Discord token (see the warning above).
-4. Start awayd automatically at login:
+4. Start awayd automatically at login: tick **Settings → Scheduler → Start awayd at login**, or
+   use the CLI:
 
    ```powershell
    .\awayctl.exe install-autostart     # adds HKCU\...\Run value "awayd"
    .\awayctl.exe uninstall-autostart   # removes it again
    ```
+
+   If you move the folder, the settings window shows that the entry points to the old location
+   and offers to update it.
 
 More details: [docs/install-windows.md](docs/install-windows.md).
 

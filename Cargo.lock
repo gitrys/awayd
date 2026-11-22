@@ -409,7 +409,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "winreg",
 ]
 
 [[package]]
@@ -427,6 +426,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "winreg",
 ]
 
 [[package]]

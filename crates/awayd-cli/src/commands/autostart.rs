@@ -1,32 +1,20 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
 
 use anyhow::Result;
-use winreg::enums::*;
-use winreg::RegKey;
-
-const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const VALUE_NAME: &str = "awayd";
+use awayd_core::autostart;
 
 pub fn install() -> Result<()> {
     let exe = awayd_core::launch::resolve_awayd_binary("awayd");
-    if !exe.is_file() {
-        anyhow::bail!(
-            "awayd.exe not found beside {}",
-            std::env::current_exe()?.display()
-        );
-    }
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let (run, _) = hkcu.create_subkey(RUN_KEY)?;
-    run.set_value(VALUE_NAME, &exe.to_string_lossy().to_string())?;
-    println!("autostart installed: {}", exe.display());
+    autostart::install(&exe)?;
+    println!("autostart installed: {}", autostart::command_for(&exe));
     Ok(())
 }
 
 pub fn uninstall() -> Result<()> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    if let Ok(run) = hkcu.open_subkey_with_flags(RUN_KEY, KEY_WRITE) {
-        let _ = run.delete_value(VALUE_NAME);
+    if autostart::uninstall()? {
+        println!("autostart removed");
+    } else {
+        println!("autostart was not set");
     }
-    println!("autostart removed");
     Ok(())
 }

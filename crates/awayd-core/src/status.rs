@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 
 pub const STATUS_SCHEMA_VERSION: u32 = 1;
 
+/// `StatusSnapshot::source` when the tick failed: nothing was applied and `work_mode` is
+/// unknown (shown as an error in the tray instead of "online").
+pub const SOURCE_ERROR: &str = "error";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LastApplyRecord {
     pub ok: bool,

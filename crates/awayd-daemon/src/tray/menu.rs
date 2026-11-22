@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use awayd_core::status::StatusSnapshot;
+use awayd_core::status::{StatusSnapshot, SOURCE_ERROR};
 use awayd_ipc::SchedulerApi;
 use chrono::{DateTime, Local, NaiveDateTime, Timelike};
 use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
@@ -78,7 +78,33 @@ impl TrayMenu {
     }
 }
 
+/// Windows truncates tray tooltips at 127 characters.
+const TOOLTIP_MAX: usize = 120;
+
+/// Tray tooltip: a failed tick says "error"; a tick with warnings keeps the mode and adds the
+/// first warning.
+pub fn tooltip_text(s: &StatusSnapshot) -> String {
+    let first = s.errors.first().map(String::as_str);
+    let text = if s.source == SOURCE_ERROR {
+        format!("awayd — error: {}", first.unwrap_or("status not applied"))
+    } else {
+        let mode = if s.work_mode { "work" } else { "off" };
+        match first {
+            Some(w) if !s.ok => format!("awayd — {mode} ({}) · warning: {w}", s.source),
+            _ => format!("awayd — {mode} ({})", s.source),
+        }
+    };
+    truncate_chars(&text, TOOLTIP_MAX)
+}
+
 pub fn format_status_lines(s: &StatusSnapshot, now: DateTime<Local>) -> (String, String, String) {
+    if s.source == SOURCE_ERROR {
+        return (
+            "Error: status not applied (see Logs)".to_string(),
+            format_next_line(s, now),
+            format_apply_line(s),
+        );
+    }
     let mode_core = if s.work_mode {
         "Invisible (work)"
     } else {
@@ -240,6 +266,46 @@ mod tests {
         assert!(next.starts_with("Next: in "));
         assert!(next.contains('m'));
         assert!(next.contains("schedule"));
+    }
+
+    #[test]
+    fn failed_tick_is_shown_as_error() {
+        let mut s = snap(false, SOURCE_ERROR, None);
+        s.ok = false;
+        s.last_apply = None;
+        s.errors = vec!["load config: parse config.toml".into()];
+        let (mode, _, _) = format_status_lines(&s, Local::now());
+        assert_eq!(mode, "Error: status not applied (see Logs)");
+        assert_eq!(
+            tooltip_text(&s),
+            "awayd — error: load config: parse config.toml"
+        );
+    }
+
+    #[test]
+    fn warning_keeps_mode_in_tooltip() {
+        let mut s = snap(true, "schedule", None);
+        s.ok = false;
+        s.errors = vec!["discord token missing (keyring or fallback file)".into()];
+        let (mode, _, _) = format_status_lines(&s, Local::now());
+        assert_eq!(mode, "! Invisible (work)");
+        assert_eq!(
+            tooltip_text(&s),
+            "awayd — work (schedule) · warning: discord token missing (keyring or fallback file)"
+        );
+        assert_eq!(
+            tooltip_text(&snap(false, "manual_override", None)),
+            "awayd — off (manual_override)"
+        );
+    }
+
+    #[test]
+    fn tooltip_is_truncated() {
+        let mut s = snap(false, SOURCE_ERROR, None);
+        s.errors = vec!["x".repeat(300)];
+        let t = tooltip_text(&s);
+        assert_eq!(t.chars().count(), TOOLTIP_MAX);
+        assert!(t.ends_with('…'));
     }
 
     #[test]
