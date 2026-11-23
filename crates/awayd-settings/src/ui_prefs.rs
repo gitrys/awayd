@@ -87,9 +87,10 @@ impl SettingsUiPrefs {
     }
 
     fn clamp(&mut self) {
-        // Do not enforce minimum width/height on load — that breaks restore of narrow windows.
-        self.width = self.width.clamp(1.0, MAX_WIDTH);
-        self.height = self.height.clamp(1.0, MAX_HEIGHT);
+        // The minimum also applies to a saved size: Windows enforces it only while resizing,
+        // a window created smaller stays smaller.
+        self.width = self.width.clamp(MIN_WIDTH, MAX_WIDTH);
+        self.height = self.height.clamp(MIN_HEIGHT, MAX_HEIGHT);
         self.zoom = self.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
     }
 
@@ -112,6 +113,14 @@ mod tests {
         assert!(p.pos_x.is_none());
         assert!(p.pos_y.is_none());
         assert_eq!(p.theme, ThemeChoice::System);
+    }
+
+    #[test]
+    fn saved_size_is_raised_to_the_minimum() {
+        let mut p: SettingsUiPrefs =
+            serde_json::from_str(r#"{"width":700.0,"height":500.0,"zoom":1.0}"#).unwrap();
+        p.clamp();
+        assert_eq!((p.width, p.height), (MIN_WIDTH, MIN_HEIGHT));
     }
 
     #[test]
