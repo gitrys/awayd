@@ -1,10 +1,22 @@
-# awayd
+<p align="center"><img src="data/icons/awayd-app.svg" width="72" alt=""></p>
 
-Away/online status scheduler for **Steam** and **Discord** on Windows.
+<h1 align="center">awayd</h1>
+
+<p align="center">Invisible while you work, online when you are free: automatic <b>Steam</b> and
+<b>Discord</b> status for Windows.</p>
+
+<p align="center"><img src="docs/images/settings-overview.png" width="760"
+alt="awayd settings, Overview page: current status invisible during work hours, next change, override and last apply per service"></p>
 
 awayd runs in the system tray and switches your status automatically: **invisible** during your
 work hours, **online** outside of them. It knows public holidays, your vacations and manual
-overrides ("stay invisible for 2 hours").
+overrides ("stay invisible for 2 hours"). Instead of work hours it can also follow a device on
+your network, e.g. your work laptop. It is built to run next to games: it uses about 20 MB of
+memory and practically no CPU while idle.
+
+> [!NOTE]
+> The screenshots show the current development version (`main`). The latest release,
+> v0.2.0, does not have the redesigned settings window and tray yet.
 
 > [!WARNING]
 > **Discord: use at your own risk.** awayd changes your Discord status through Discord's web API
@@ -20,13 +32,53 @@ owners and are used here only to describe what the program works with.
 
 ## Features
 
+- **Two ways to decide:** work hours per weekday with public holidays (country and region) and
+  vacations, or **network presence** (invisible while a device on your network answers)
+- **Overview** of the current status, the next change and the last apply per service
+- **Override** from the settings, the tray or the CLI: invisible or online for 30 minutes up to
+  4 hours, or until the next scheduled change
 - Choose the services awayd manages: Steam (on by default) and Discord (off by default)
-- Work hours per weekday, public holidays (country and region), vacation ranges
-- Manual override from the tray or CLI, either for a fixed time or until the next scheduled change
-- Re-applies the status when Discord or Steam starts and after resume from standby
-- Steam is only touched while it is running (awayd never starts Steam)
-- Settings window, live log view, command-line client
+- Re-applies the status when Steam or Discord starts and after resume from standby; Steam is
+  only touched while it is running (awayd never starts Steam)
+- Tray icon that shows the state by its shape, readable in light and dark taskbars
+- Settings window in light or dark (or following Windows), live log view, command-line client
+- Light on resources (see [below](#light-on-resources))
 - Portable: everything lives next to the executables
+
+## Screenshots
+
+| Network presence | Days off | Services |
+|---|---|---|
+| <img src="docs/images/settings-network.png" width="300" alt="Mode page with network presence selected: host, test button, ping or TCP"> | <img src="docs/images/settings-days-off.png" width="300" alt="Days off page: public holidays of the year and vacations with day counts"> | <img src="docs/images/settings-services.png" width="300" alt="Services page: Discord switched off with the Terms of Service warning, Steam switched on"> |
+
+### Tray
+
+<img src="docs/images/tray-icons.png" width="484" alt="Tray icon states on a dark and a light taskbar: empty ring, half-filled circle, ring with blue dot, half-filled with blue dot, half-filled with yellow triangle, dashed ring with yellow triangle">
+
+From left: online · invisible · override (online) · override (invisible) · warning · status
+unknown. **Left click** opens the settings, **right click** the menu: the status with its next
+change, "Invisible ▸" and "Online ▸" for an override with a duration, "Clear override" while one
+is active, "Apply now", "Open settings…", "Quit". A warning line (e.g. a missing Discord token)
+opens the matching settings page.
+
+## Light on resources
+
+awayd stays resident next to games, so it is kept small. Measured on Windows 11 with about 450
+running processes, awayd idle over 60 s:
+
+| | |
+|---|---|
+| CPU | below the measurement resolution (≤ 16 ms per minute) |
+| Memory | about 20 MB working set, 8 MB private |
+| Threads | 9 |
+
+- Program starts are noticed by comparing the list of process IDs (no WMI, no full process
+  snapshot); the check runs every 5 s by default, can be set to 2–60 s or off
+  (**Settings → General → Advanced**) and rests completely when no switched-on service has a
+  program to watch.
+- Between status changes awayd sleeps; the tray waits for window messages instead of polling.
+- The settings window is a separate program that only runs while it is open.
+- **Settings → General → Resource use** shows awayd's own memory and CPU time.
 
 ## Requirements
 
@@ -48,8 +100,9 @@ owners and are used here only to describe what the program works with.
    your PC" on the first start. Choose **More info → Run anyway** if you trust the download
    (verified checksum/signature).
 3. Click the tray icon to open **Settings** (or run `awayd-settings.exe`) and complete the wizard:
-   services, country/region and work hours. The Discord token is only asked for when you switch
-   Discord on (see the warning above).
+   services, then the mode (work hours: country/region and work hours; network presence: the
+   device to watch). The Discord token is only asked for when you switch Discord on (see the
+   warning above).
 
    The services can be changed later in **Settings → Services** or in
    `config\config.toml`:
@@ -121,6 +174,7 @@ With `portable.marker` next to the executables (the default for the portable fol
 |---|---|
 | Settings | `config\config.toml` |
 | State (override, last apply) | `state\state.json` |
+| Settings window (size, position, zoom, theme) | `state\settings_ui.json` |
 | Logs (NDJSON, rotated) | `state\logs\awayd.log` |
 | Holiday data cache | `data\holidays\<COUNTRY>.json` |
 | Credentials (Discord token) | Windows Credential Manager, service `awayd`, user = service id (`discord`). Only if that fails: plain text in `state\credentials\<id>.secret` |

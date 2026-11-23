@@ -252,6 +252,77 @@ mod tests {
         assert_eq!((p[0], p[1], p[3]), (0xFF, 0xB9, 255), "{p:?}");
     }
 
+    /// Regenerates `docs/images/tray-icons.png` for the README (all states on a dark and a
+    /// light taskbar, drawn by the same code as the tray):
+    /// `cargo test -p awayd-daemon write_tray_icons_png -- --ignored`.
+    #[test]
+    #[ignore = "writes docs/images/tray-icons.png; run on purpose"]
+    fn write_tray_icons_png() {
+        const ICON: u32 = 48;
+        const GAP: u32 = 28;
+        let states = [
+            Glyph::ONLINE,
+            Glyph {
+                half: true,
+                ..Glyph::ONLINE
+            },
+            Glyph {
+                override_dot: true,
+                ..Glyph::ONLINE
+            },
+            Glyph {
+                half: true,
+                override_dot: true,
+                ..Glyph::ONLINE
+            },
+            Glyph {
+                half: true,
+                warning: true,
+                ..Glyph::ONLINE
+            },
+            Glyph {
+                dashed: true,
+                warning: true,
+                ..Glyph::ONLINE
+            },
+        ];
+        let width = states.len() as u32 * (ICON + GAP) + GAP;
+        let row = ICON + 2 * GAP;
+        let mut sheet = Pixmap::new(width, 2 * row).unwrap();
+        for (r, (light, bg)) in [(false, [0x1C, 0x1C, 0x1C]), (true, [0xEE, 0xEE, 0xEE])]
+            .into_iter()
+            .enumerate()
+        {
+            let rect = resvg::tiny_skia::Rect::from_xywh(
+                0.0,
+                (r as u32 * row) as f32,
+                width as f32,
+                row as f32,
+            )
+            .unwrap();
+            let mut paint = resvg::tiny_skia::Paint::default();
+            paint.set_color_rgba8(bg[0], bg[1], bg[2], 255);
+            sheet.fill_rect(rect, &paint, Transform::identity(), None);
+            for (i, g) in states.iter().enumerate() {
+                let tree =
+                    usvg::Tree::from_str(&svg(*g, light, ICON), &usvg::Options::default()).unwrap();
+                let scale = ICON as f32 / tree.size().width();
+                let x = (GAP + i as u32 * (ICON + GAP)) as f32;
+                let y = (r as u32 * row + GAP) as f32;
+                resvg::render(
+                    &tree,
+                    Transform::from_translate(x, y).pre_scale(scale, scale),
+                    &mut sheet.as_mut(),
+                );
+            }
+        }
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/images/tray-icons.png"
+        );
+        sheet.save_png(path).unwrap();
+    }
+
     #[test]
     fn every_combination_rasterizes() {
         for bits in 0..16u8 {

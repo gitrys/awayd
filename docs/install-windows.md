@@ -31,12 +31,13 @@ cargo build --release
 ## First run
 
 1. Copy the portable folder anywhere (e.g. `F:\apps\awayd-portable\`).
-2. Run `awayd.exe` — tray icon appears.
+2. Run `awayd.exe` — tray icon appears (left click: settings, right click: menu).
 3. Click the tray icon to open **Settings** (or run `awayd-settings.exe`).
 4. Complete the wizard: services (Steam on, Discord off by default; the Discord token is only
-   asked for when you switch Discord on), country/region, work hours. Change the services later
-   in **Settings → Services** or in `config.toml` (`[backends.discord]`,
-   `[backends.steam]`, `enabled = true|false`).
+   asked for when you switch Discord on), then the mode: work hours (country/region and work
+   hours) or network presence (the device to watch, with "Test now"). Change everything later
+   in the settings, or in `config.toml` (e.g. `[backends.discord]`, `[backends.steam]`,
+   `enabled = true|false`).
 5. Register autostart: `awayctl.exe install-autostart`
 
 ## Autostart
@@ -66,7 +67,11 @@ reporting problems (`ok: no`, e.g. a missing Discord token while Discord is on),
 daemon rejects `override set` / `override clear`. The reason is printed on stderr, so
 `awayctl doctor --json` keeps valid JSON on stdout.
 
-## Notifications and gaming
+## Gaming
 
-Failure toasts are **suppressed** when Windows reports fullscreen D3D, presentation mode, busy, or quiet time (`SHQueryUserNotificationState`). Borderless games may still show toasts — add a Focus Assist rule in Windows Settings if needed.
+awayd shows no Windows notifications, so it never pops up over a game. Problems appear in the
+tray icon (yellow triangle), its tooltip and menu, and on the settings Overview page. While
+idle awayd uses about 20 MB of memory and practically no CPU; the check for program starts
+can be slowed down or turned off in **Settings → General → Advanced → Watch for program
+starts**.
 
