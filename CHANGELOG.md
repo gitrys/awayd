@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-23
+
+### Upgrading from 0.3.0
+
+- Replace all three programs (`awayd.exe`, `awayd-settings.exe`, `awayctl.exe`) together.
+  `config.toml`, the Discord token and the saved state are kept.
+- **Log files to keep** now counts the current `awayd.log` too: with the default 5, awayd keeps
+  `awayd.log` and `awayd.log.1` to `.4`; an `awayd.log.5` is deleted at the next rotation.
+
 ### Fixed
 
 - Settings: the country picker under **Days off** offered only Germany. At start the settings
@@ -260,7 +269,8 @@ First public release of awayd for Windows.
   only manages Steam.
 - The executables are not code-signed yet; Windows SmartScreen may warn on first start.
 
-[Unreleased]: https://github.com/gitrys/awayd/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gitrys/awayd/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/gitrys/awayd/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/gitrys/awayd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gitrys/awayd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gitrys/awayd/releases/tag/v0.1.0
