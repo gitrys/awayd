@@ -51,6 +51,25 @@ impl Ipc {
         self.inner.refresh_holiday_data(country).await
     }
 
+    pub async fn holiday_data_status(
+        &mut self,
+        country: &str,
+    ) -> Result<(bool, i32, i32, String, String)> {
+        self.inner.holiday_data_status(country).await
+    }
+
+    pub async fn apply_now(&mut self) -> Result<bool> {
+        self.inner.apply_now().await
+    }
+
+    pub async fn set_override(&mut self, mode: &str, ttl_seconds: u32) -> Result<bool> {
+        self.inner.set_override(mode, ttl_seconds).await
+    }
+
+    pub async fn clear_override(&mut self) -> Result<bool> {
+        self.inner.clear_override().await
+    }
+
     pub async fn probe_host(
         &mut self,
         host: &str,

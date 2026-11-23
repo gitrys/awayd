@@ -15,6 +15,7 @@ const ICON: f32 = 16.0;
 /// Line icons of the sidebar, drawn in a 16 px box.
 #[derive(Clone, Copy)]
 pub enum NavIcon {
+    Home,
     Clock,
     Calendar,
     Link,
@@ -92,6 +93,16 @@ fn draw_icon(painter: &Painter, icon: NavIcon, c: Pos2, color: Color32, bg: Colo
     let s = Stroke::new(1.3_f32, color);
     let at = |x: f32, y: f32| pos2(c.x + x, c.y + y);
     match icon {
+        NavIcon::Home => {
+            let pts = vec![
+                at(-5.5, -0.5),
+                at(0.0, -5.0),
+                at(5.5, -0.5),
+                at(5.5, 5.5),
+                at(-5.5, 5.5),
+            ];
+            painter.add(egui::Shape::closed_line(pts, s));
+        }
         NavIcon::Clock => {
             painter.circle_stroke(c, 5.5, s);
             painter.line_segment([c, at(0.0, -3.0)], s);

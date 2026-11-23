@@ -6,6 +6,7 @@ use awayd_core::autostart::{self, AutostartState};
 use awayd_core::backends::{self, BackendInfo};
 use awayd_core::config::paths;
 use awayd_core::config::schema::{AppConfig, ProbeKind, VacationEntry, MIN_PROBE_INTERVAL_SECONDS};
+use awayd_core::status::SOURCE_ERROR;
 use awayd_core::StatusSnapshot;
 use awayd_ipc::ProbeHostResult;
 use chrono::{Datelike, NaiveDate};
@@ -88,6 +89,7 @@ struct VacationRangeUi {
 /// Pages of the sidebar, in their order there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
+    Overview,
     Mode,
     DaysOff,
     Services,
@@ -96,7 +98,8 @@ enum Page {
 }
 
 impl Page {
-    const ALL: [Page; 5] = [
+    const ALL: [Page; 6] = [
+        Page::Overview,
         Page::Mode,
         Page::DaysOff,
         Page::Services,
@@ -106,6 +109,7 @@ impl Page {
 
     fn label(self) -> &'static str {
         match self {
+            Page::Overview => "Overview",
             Page::Mode => "Mode",
             Page::DaysOff => "Days off",
             Page::Services => "Services",
@@ -116,6 +120,7 @@ impl Page {
 
     fn icon(self) -> NavIcon {
         match self {
+            Page::Overview => NavIcon::Home,
             Page::Mode => NavIcon::Clock,
             Page::DaysOff => NavIcon::Calendar,
             Page::Services => NavIcon::Link,
@@ -181,7 +186,31 @@ pub struct AwaydSettingsApp {
     /// What was tested ("ping" / "port 22"), for the result text.
     probe_what: String,
     probe_result: Option<ProbeView>,
+    /// Daemon status for Overview and Services, polled in the background while shown.
+    status_job: Option<Job<String>>,
+    status_snapshot: Option<StatusSnapshot>,
+    status_error: Option<String>,
+    status_polled_at: f64,
+    /// Holiday data state of the selected country (Overview), with the country it is for.
+    holiday_status_job: Option<Job<(bool, i32, i32, String, String)>>,
+    holiday_status: Option<(String, (bool, i32, i32, String, String))>,
+    /// Override form on Overview.
+    override_invisible: bool,
+    override_ttl_secs: u32,
 }
+
+/// How often Overview and Services ask the daemon for its status while shown.
+const STATUS_POLL_SECS: f64 = 2.0;
+
+/// Override durations offered on Overview (0 = until the next scheduled change).
+const OVERRIDE_DURATIONS: [(u32, &str); 6] = [
+    (0, "Until the next change"),
+    (30 * 60, "30 minutes"),
+    (60 * 60, "1 hour"),
+    (2 * 60 * 60, "2 hours"),
+    (4 * 60 * 60, "4 hours"),
+    (8 * 60 * 60, "8 hours"),
+];
 
 /// Result line of "Test now".
 struct ProbeView {
@@ -209,6 +238,112 @@ fn probe_text(result: &Result<ProbeHostResult, String>, what: &str, at: &str) ->
             ok: false,
         },
     }
+}
+
+/// Why the status is what it is, from the daemon's `source`.
+fn status_reason(s: &StatusSnapshot) -> String {
+    match s.source.as_str() {
+        SOURCE_ERROR => s
+            .errors
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "The last status could not be determined".into()),
+        "manual_override" => "Override".into(),
+        "network" if s.work_mode => "Network presence · the device answers".into(),
+        "network" => "Network presence · the device does not answer".into(),
+        _ if s.work_mode => "During work hours".into(),
+        _ => "Outside work hours, or a day off".into(),
+    }
+}
+
+/// ("17:00" or "Tue 24 Nov 09:00", "in 3 h 12 min") for the daemon's `next_wake`
+/// (`YYYY-MM-DDTHH:MM:SS`, local time).
+fn next_change_text(next_wake: &str, now: chrono::NaiveDateTime) -> Option<(String, String)> {
+    let at = chrono::NaiveDateTime::parse_from_str(next_wake, "%Y-%m-%dT%H:%M:%S").ok()?;
+    let when = if at.date() == now.date() {
+        at.format("%H:%M").to_string()
+    } else if at.date() == now.date().succ_opt()? {
+        format!("Tomorrow {}", at.format("%H:%M"))
+    } else {
+        at.format("%a %-d %b %H:%M").to_string()
+    };
+    let secs = (at - now).num_seconds();
+    let rel = if secs <= 60 {
+        "in less than a minute".to_string()
+    } else {
+        format!("in {}", format_duration_short((secs as u64 / 60) * 60))
+    };
+    Some((when, rel))
+}
+
+/// Pill and detail line for one service on Overview / Services.
+fn backend_apply_view(
+    config: &AppConfig,
+    snap: &StatusSnapshot,
+    b: &BackendInfo,
+) -> (card::PillKind, &'static str, String) {
+    use awayd_core::status::BackendApplyStatus;
+    if !config.backend_enabled(b.id) {
+        return (card::PillKind::Neutral, "Off", "Switched off".into());
+    }
+    let Some(last) = &snap.last_apply else {
+        return (card::PillKind::Neutral, "—", "Not applied yet".into());
+    };
+    let time = last.at.split('T').nth(1).unwrap_or(&last.at);
+    let time = time.get(..8).unwrap_or(time);
+    let state = if last.work_mode {
+        "invisible"
+    } else {
+        "online"
+    };
+    match last.backends.iter().find(|r| r.id == b.id) {
+        Some(r) => match r.status {
+            BackendApplyStatus::Sent => {
+                (card::PillKind::Success, "Sent", format!("{state} · {time}"))
+            }
+            BackendApplyStatus::Skipped => (
+                card::PillKind::Warning,
+                "Skipped",
+                r.message
+                    .clone()
+                    .unwrap_or_else(|| format!("{state} · {time}")),
+            ),
+            BackendApplyStatus::Failed => (
+                card::PillKind::Error,
+                "Failed",
+                r.message
+                    .clone()
+                    .unwrap_or_else(|| format!("{state} · {time}")),
+            ),
+        },
+        None => (
+            card::PillKind::Neutral,
+            "—",
+            format!("Not part of the last apply · {time}"),
+        ),
+    }
+}
+
+/// "DE · data 2025–2029 · updated 14 Nov 2026", or the daemon's message.
+fn holiday_status_text(
+    country: &str,
+    ready: bool,
+    min: i32,
+    max: i32,
+    fetched: &str,
+    message: &str,
+) -> String {
+    if !ready {
+        return if message.is_empty() {
+            format!("{country} · no holiday data yet")
+        } else {
+            format!("{country} · {message}")
+        };
+    }
+    let updated = chrono::DateTime::parse_from_rfc3339(fetched)
+        .map(|d| format!(" · updated {}", d.format("%-d %b %Y")))
+        .unwrap_or_default();
+    format!("{country} · data {min}–{max}{updated}")
 }
 
 /// "45 s", "2 min", "1 h 30 min".
@@ -371,7 +506,7 @@ impl AwaydSettingsApp {
             window_track_after: f64::MAX,
             tracked_geometry: None,
             tracked_geometry_since: 0.0,
-            active_page: Page::Mode,
+            active_page: Page::Overview,
             log_view: None,
             log_popout_open: false,
             config_error: None,
@@ -383,6 +518,14 @@ impl AwaydSettingsApp {
             probe_job: None,
             probe_what: String::new(),
             probe_result: None,
+            status_job: None,
+            status_snapshot: None,
+            status_error: None,
+            status_polled_at: f64::NEG_INFINITY,
+            holiday_status_job: None,
+            holiday_status: None,
+            override_invisible: true,
+            override_ttl_secs: 0,
         };
         app.reload();
         app
@@ -469,12 +612,59 @@ impl AwaydSettingsApp {
                 Err(e) => self.set_status_error(format!("Refresh failed: {e}")),
             }
         }
+        if let Some(result) = self.status_job.as_ref().and_then(Job::poll) {
+            self.status_job = None;
+            match result.and_then(|raw| {
+                serde_json::from_str::<StatusSnapshot>(&raw).map_err(anyhow::Error::from)
+            }) {
+                Ok(s) => {
+                    self.status_snapshot = Some(s);
+                    self.status_error = None;
+                }
+                Err(e) => self.status_error = Some(format!("{e:#}")),
+            }
+        }
+        if let Some(result) = self.holiday_status_job.as_ref().and_then(Job::poll) {
+            self.holiday_status_job = None;
+            if let Ok(s) = result {
+                self.holiday_status = Some((self.config.schedule.country.clone(), s));
+            }
+        }
         if let Some(result) = self.probe_job.as_ref().and_then(Job::poll) {
             self.probe_job = None;
             let at = chrono::Local::now().format("%H:%M:%S").to_string();
             let result = result.map_err(|e| format!("{e:#}"));
             self.probe_result = Some(probe_text(&result, &self.probe_what, &at));
         }
+    }
+
+    /// While Overview or Services is shown: ask for the daemon status every
+    /// [`STATUS_POLL_SECS`], and for the holiday data state once per country.
+    fn poll_status_if_shown(&mut self, ctx: &egui::Context) {
+        let shown = !self.wizard && matches!(self.active_page, Page::Overview | Page::Services);
+        if !shown || !self.daemon_ok {
+            return;
+        }
+        if self.status_job.is_none() && self.frame_time - self.status_polled_at >= STATUS_POLL_SECS
+        {
+            self.status_polled_at = self.frame_time;
+            self.status_job = Some(Job::spawn(&self.rt, &self.ctx, async {
+                Ipc::new().status().await
+            }));
+        }
+        let country = self.config.schedule.country.clone();
+        let known = matches!(&self.holiday_status, Some((c, _)) if *c == country);
+        if !known && self.holiday_status_job.is_none() && self.active_page == Page::Overview {
+            self.holiday_status_job = Some(Job::spawn(&self.rt, &self.ctx, async move {
+                Ipc::new().holiday_data_status(&country).await
+            }));
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(STATUS_POLL_SECS));
+    }
+
+    /// Ask for the status again right away (after an override or "Apply now").
+    fn refresh_status_soon(&mut self) {
+        self.status_polled_at = f64::NEG_INFINITY;
     }
 
     fn handle_holiday_flyout_action(&mut self, action: HolidayFlyoutAction) {
@@ -887,8 +1077,9 @@ impl AwaydSettingsApp {
     }
 
     /// One card per service with its switch, risk note and, while switched on, its
-    /// credential field. Returns true when a switch changed (the caller decides when to save).
-    fn services_ui(&mut self, ui: &mut egui::Ui, widget_id: &str) -> bool {
+    /// credential field; `with_status` adds the last apply and the watched program. Returns
+    /// true when a switch changed (the caller decides when to save).
+    fn services_ui(&mut self, ui: &mut egui::Ui, widget_id: &str, with_status: bool) -> bool {
         let mut changed = false;
         for b in backends::ALL {
             let mut on = self.config.backend_enabled(b.id);
@@ -924,6 +1115,17 @@ impl AwaydSettingsApp {
                         ui,
                         "Stored in the Windows Credential Manager, not in config.toml.",
                     );
+                }
+                if with_status {
+                    if let Some(snap) = &self.status_snapshot {
+                        let (kind, word, detail) = backend_apply_view(&self.config, snap, b);
+                        card::row(ui, "Last apply", Some(&detail), |ui| {
+                            card::pill(ui, kind, word);
+                        });
+                    }
+                    card::row(ui, "Applied again when it starts", None, |ui| {
+                        card::secondary_label(ui, b.process_names.join(", "));
+                    });
                 }
             });
             ui.add_space(12.0);
@@ -1435,6 +1637,7 @@ impl eframe::App for AwaydSettingsApp {
         self.frame_time = ctx.input(|i| i.time);
         self.apply_startup_prefs(ctx);
         self.tick_status(ctx);
+        self.poll_status_if_shown(ctx);
         self.track_window_geometry(ctx);
 
         let p = theme::palette(ctx);
@@ -1527,6 +1730,7 @@ impl eframe::App for AwaydSettingsApp {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .show(ui, |ui| match page {
+                                Page::Overview => self.overview_page(ui),
                                 Page::Mode => self.mode_page(ui),
                                 Page::DaysOff => self.days_off_page(ui),
                                 Page::Services => self.services_page(ui),
@@ -1608,7 +1812,7 @@ impl AwaydSettingsApp {
             }
             1 => {
                 // Switches are saved with the later steps and on "Finish".
-                self.services_ui(ui, "wiz_credential");
+                self.services_ui(ui, "wiz_credential", false);
                 ui.horizontal(|ui| {
                     if ui.button("Back").clicked() {
                         self.wizard_step = 0;
@@ -1733,6 +1937,217 @@ impl AwaydSettingsApp {
         if changed {
             self.save_mode_if_complete();
         }
+    }
+
+    fn overview_page(&mut self, ui: &mut egui::Ui) {
+        card::page_header(
+            ui,
+            "Overview",
+            "What awayd does right now and what comes next.",
+        );
+        if !self.daemon_ok {
+            card::notice_text(
+                ui,
+                NoticeKind::Warning,
+                "awayd is not running. Start awayd.exe; this page shows its status then.",
+            );
+            return;
+        }
+        let Some(snap) = self.status_snapshot.clone() else {
+            match &self.status_error {
+                Some(e) => card::notice_text(ui, NoticeKind::Error, format!("No status: {e}")),
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Asking awayd for its status…");
+                    });
+                }
+            }
+            return;
+        };
+
+        card::card(ui, |ui| self.status_card_ui(ui, &snap));
+        for e in &snap.errors {
+            ui.add_space(6.0);
+            card::notice_text(ui, NoticeKind::Warning, e);
+        }
+        ui.add_space(12.0);
+        ui.columns(2, |cols| {
+            card::card(&mut cols[0], |ui| self.override_card_ui(ui, &snap));
+            card::card(&mut cols[1], |ui| self.last_apply_card_ui(ui, &snap));
+        });
+    }
+
+    fn status_card_ui(&mut self, ui: &mut egui::Ui, snap: &StatusSnapshot) {
+        let caption = |ui: &mut egui::Ui, text: &str| {
+            let color = theme::palette(ui.ctx()).text_secondary;
+            ui.label(egui::RichText::new(text).size(11.5).strong().color(color));
+        };
+        let mut go_to_mode = false;
+        ui.columns(3, |cols| {
+            caption(&mut cols[0], "CURRENT STATUS");
+            let state = if snap.source == SOURCE_ERROR {
+                "Unknown"
+            } else if snap.work_mode {
+                "Invisible"
+            } else {
+                "Online"
+            };
+            cols[0].label(egui::RichText::new(state).size(22.0));
+            card::secondary_label(&mut cols[0], status_reason(snap));
+
+            caption(&mut cols[1], "NEXT CHANGE");
+            if snap.mode_kind == "network" && snap.source != "manual_override" {
+                cols[1].label(egui::RichText::new("When the device comes or goes").size(15.0));
+                card::secondary_label(
+                    &mut cols[1],
+                    format!(
+                        "Checked every {}",
+                        format_duration_short(self.config.mode.probe_interval_seconds)
+                    ),
+                );
+            } else {
+                match snap
+                    .next_wake
+                    .as_deref()
+                    .and_then(|w| next_change_text(w, chrono::Local::now().naive_local()))
+                {
+                    Some((when, rel)) => {
+                        cols[1].label(egui::RichText::new(when).size(15.0));
+                        card::secondary_label(&mut cols[1], rel);
+                    }
+                    None => {
+                        cols[1].label("—");
+                    }
+                }
+            }
+
+            caption(&mut cols[2], "MODE");
+            let mode = if snap.mode_kind == "network" {
+                "Network presence"
+            } else {
+                "Work hours"
+            };
+            card::pill(&mut cols[2], card::PillKind::Neutral, mode);
+            if cols[2].link("Change mode").clicked() {
+                go_to_mode = true;
+            }
+        });
+        if go_to_mode {
+            self.active_page = Page::Mode;
+        }
+    }
+
+    fn override_card_ui(&mut self, ui: &mut egui::Ui, snap: &StatusSnapshot) {
+        let p = theme::palette(ui.ctx());
+        card::card_title(ui, "Override");
+        card::secondary_label(
+            ui,
+            "Set a status by hand. It wins over work hours and network presence until it ends.",
+        );
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.override_invisible, true, "Invisible");
+            ui.selectable_value(&mut self.override_invisible, false, "Online");
+        });
+        ui.horizontal(|ui| {
+            ui.label("For");
+            let current = OVERRIDE_DURATIONS
+                .iter()
+                .find(|(s, _)| *s == self.override_ttl_secs)
+                .map_or("Until the next change", |(_, l)| *l);
+            egui::ComboBox::from_id_salt("override_duration")
+                .selected_text(current)
+                .width(190.0)
+                .show_ui(ui, |ui| {
+                    for (secs, label) in OVERRIDE_DURATIONS {
+                        ui.selectable_value(&mut self.override_ttl_secs, secs, label);
+                    }
+                });
+        });
+        let active = snap.source == "manual_override";
+        ui.horizontal(|ui| {
+            let set = egui::Button::new(egui::RichText::new("Set override").color(p.on_accent))
+                .fill(p.accent);
+            if ui.add(set).clicked() {
+                let mode = if self.override_invisible {
+                    "invisible"
+                } else {
+                    "online"
+                };
+                let ttl = self.override_ttl_secs;
+                match self.rt.block_on(self.ipc.set_override(mode, ttl)) {
+                    Ok(true) => self.set_status_success(format!("Override set: {mode}")),
+                    Ok(false) => self.set_status_error("awayd rejected the override"),
+                    Err(e) => self.set_status_error(format!("Override not set: {e}")),
+                }
+                self.refresh_status_soon();
+            }
+            if ui
+                .add_enabled(active, egui::Button::new("Clear override"))
+                .clicked()
+            {
+                match self.rt.block_on(self.ipc.clear_override()) {
+                    Ok(true) => self.set_status_success("Override cleared"),
+                    Ok(false) => self.set_status_error("awayd could not clear the override"),
+                    Err(e) => self.set_status_error(format!("Override not cleared: {e}")),
+                }
+                self.refresh_status_soon();
+            }
+        });
+        if active {
+            let until = snap
+                .next_wake
+                .as_deref()
+                .and_then(|w| next_change_text(w, chrono::Local::now().naive_local()))
+                .map(|(when, _)| format!(" until {when}"))
+                .unwrap_or_default();
+            let state = if snap.work_mode {
+                "Invisible"
+            } else {
+                "Online"
+            };
+            ui.label(egui::RichText::new(format!("Override active: {state}{until}")).strong());
+        } else {
+            card::secondary_label(ui, "No override active.");
+        }
+    }
+
+    fn last_apply_card_ui(&mut self, ui: &mut egui::Ui, snap: &StatusSnapshot) {
+        ui.horizontal(|ui| {
+            card::card_title(ui, "Last apply");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Apply now").clicked() {
+                    match self.rt.block_on(self.ipc.apply_now()) {
+                        Ok(true) => self.set_status_success("Applying the status now"),
+                        Ok(_) => self.set_status_error("awayd did not accept \"Apply now\""),
+                        Err(e) => self.set_status_error(format!("Apply now failed: {e}")),
+                    }
+                    self.refresh_status_soon();
+                }
+            });
+        });
+        for b in backends::ALL {
+            card::divider(ui);
+            let (kind, word, detail) = backend_apply_view(&self.config, snap, b);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(b.display_name).strong());
+                    card::secondary_label(ui, detail);
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    card::pill(ui, kind, word);
+                });
+            });
+        }
+        card::divider(ui);
+        ui.label(egui::RichText::new("Public holidays").strong());
+        let text = match &self.holiday_status {
+            Some((country, (ready, min, max, fetched, message))) => {
+                holiday_status_text(country, *ready, *min, *max, fetched, message)
+            }
+            None => "Checking holiday data…".to_string(),
+        };
+        card::secondary_label(ui, text);
     }
 
     fn network_mode(&self) -> bool {
@@ -1972,7 +2387,7 @@ impl AwaydSettingsApp {
             "Which statuses awayd changes. A switched-off service is never contacted and its \
              token is not read.",
         );
-        if self.services_ui(ui, "sched_credential") {
+        if self.services_ui(ui, "sched_credential", true) {
             self.save_schedule_if_valid();
         }
     }
@@ -2261,6 +2676,79 @@ mod tests {
         let v = probe_text(&unknown, "ping", "t");
         assert!(!v.ok);
         assert_eq!(v.text, "Not checked: host name not found · t");
+    }
+
+    #[test]
+    fn next_change_texts() {
+        let now = NaiveDate::from_ymd_opt(2026, 11, 23)
+            .unwrap()
+            .and_hms_opt(13, 48, 0)
+            .unwrap();
+        assert_eq!(
+            next_change_text("2026-11-23T17:00:00", now),
+            Some(("17:00".into(), "in 3 h 12 min".into()))
+        );
+        assert_eq!(
+            next_change_text("2026-11-24T09:00:00", now).unwrap().0,
+            "Tomorrow 09:00"
+        );
+        assert_eq!(
+            next_change_text("2026-12-23T00:00:00", now).unwrap().0,
+            "Wed 23 Dec 00:00"
+        );
+        assert_eq!(next_change_text("garbage", now), None);
+    }
+
+    #[test]
+    fn holiday_status_texts() {
+        assert_eq!(
+            holiday_status_text("DE", true, 2025, 2029, "2026-11-14T11:12:28.3639+00:00", ""),
+            "DE · data 2025–2029 · updated 14 Nov 2026"
+        );
+        assert_eq!(
+            holiday_status_text("DE", false, 0, 0, "", "download failed"),
+            "DE · download failed"
+        );
+    }
+
+    #[test]
+    fn apply_view_per_service() {
+        use awayd_core::status::{BackendApplyRecord, BackendApplyStatus, LastApplyRecord};
+        let mut config = AppConfig::default();
+        config.set_backend_enabled(backends::DISCORD, true);
+        config.set_backend_enabled(backends::STEAM, true);
+        let snap = StatusSnapshot {
+            last_apply: Some(LastApplyRecord {
+                ok: true,
+                work_mode: true,
+                source: "schedule".into(),
+                at: "2026-11-23T08:00:02".into(),
+                backends: vec![
+                    BackendApplyRecord {
+                        id: "steam".into(),
+                        status: BackendApplyStatus::Sent,
+                        message: None,
+                    },
+                    BackendApplyRecord {
+                        id: "discord".into(),
+                        status: BackendApplyStatus::Skipped,
+                        message: Some("no discord token configured".into()),
+                    },
+                ],
+            }),
+            ..Default::default()
+        };
+        let steam = backends::find("steam").unwrap();
+        let discord = backends::find("discord").unwrap();
+        let (_, word, detail) = backend_apply_view(&config, &snap, steam);
+        assert_eq!((word, detail.as_str()), ("Sent", "invisible · 08:00:02"));
+        let (_, word, detail) = backend_apply_view(&config, &snap, discord);
+        assert_eq!(
+            (word, detail.as_str()),
+            ("Skipped", "no discord token configured")
+        );
+        config.set_backend_enabled(backends::DISCORD, false);
+        assert_eq!(backend_apply_view(&config, &snap, discord).1, "Off");
     }
 
     #[test]

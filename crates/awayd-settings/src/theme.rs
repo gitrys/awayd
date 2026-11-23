@@ -31,6 +31,7 @@ pub struct Palette {
     /// Text selection and selected list rows.
     pub selection: Color32,
     pub success_fg: Color32,
+    pub success_bg: Color32,
     pub warn_fg: Color32,
     pub warn_bg: Color32,
     pub error_fg: Color32,
@@ -58,6 +59,7 @@ pub static LIGHT: Palette = Palette {
     nav_hover: Color32::from_rgb(0xE6, 0xE6, 0xE6),
     selection: Color32::from_rgb(0xCC, 0xE4, 0xF7),
     success_fg: Color32::from_rgb(0x0E, 0x5C, 0x0E),
+    success_bg: Color32::from_rgb(0xDF, 0xF6, 0xDD),
     warn_fg: Color32::from_rgb(0x5C, 0x39, 0x00),
     warn_bg: Color32::from_rgb(0xFF, 0xF4, 0xCE),
     error_fg: Color32::from_rgb(0xA4, 0x26, 0x2C),
@@ -85,6 +87,7 @@ pub static DARK: Palette = Palette {
     nav_hover: Color32::from_rgb(0x28, 0x28, 0x28),
     selection: Color32::from_rgb(0x1A, 0x3A, 0x52),
     success_fg: Color32::from_rgb(0x8F, 0xE0, 0x8A),
+    success_bg: Color32::from_rgb(0x1F, 0x3A, 0x1F),
     warn_fg: Color32::from_rgb(0xF7, 0xD7, 0x74),
     warn_bg: Color32::from_rgb(0x3D, 0x31, 0x15),
     error_fg: Color32::from_rgb(0xFF, 0x99, 0xA4),
@@ -274,6 +277,7 @@ mod tests {
             assert_readable(&format!("{theme} link on card"), p.link, p.card);
             assert_readable(&format!("{theme} on_accent"), p.on_accent, p.accent);
             assert_readable(&format!("{theme} text on selection"), p.text, p.selection);
+            assert_readable(&format!("{theme} success"), p.success_fg, p.success_bg);
             assert_readable(&format!("{theme} warning"), p.warn_fg, p.warn_bg);
             assert_readable(&format!("{theme} error"), p.error_fg, p.error_bg);
             assert_readable(&format!("{theme} info"), p.info_fg, p.info_bg);

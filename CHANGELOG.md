@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The setup wizard asks for the mode and, for network presence, for the device instead of
   region and work hours.
 - Work hours table: a "Day at a glance" bar per day.
+- Settings page **Overview** (opens first): current status with its reason, the next change,
+  the mode, the last apply per service (sent, skipped or failed with the reason), the holiday
+  data and the daemon's warnings; an override (invisible or online, until the next change or
+  for 30 min to 8 h) and "Apply now" without the tray. The status is refreshed every 2 s while
+  the page is shown.
+- Services page: the last apply and the program whose start makes awayd apply again, per
+  service.
 
 ### Changed
 

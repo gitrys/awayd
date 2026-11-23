@@ -195,3 +195,19 @@ button are under **General**.
   region and work hours as before (5 steps).
 - **Day at a glance:** each work day shows its window on a 0–24 h bar (hover shows the times);
   with "Same hours" on, the bars follow the Start/End row.
+
+## 2026-11-23 – Plan UI-3 (Overview page)
+
+- **Status:** open the settings → Overview first; current status ("Invisible"/"Online"), the
+  reason, the next change with "in …", the mode; matches the tray menu and `awayctl doctor`.
+- **Override:** pick "Online", "1 hour", "Set override" → status bar "Override set", within
+  2 s the card shows "Override active: Online until …", the tray agrees; "Clear override" →
+  back to the schedule. "Until the next change" in network mode lasts the override hours.
+- **Apply now:** click → status bar message; the log shows a new apply; "Last apply" time
+  updates within 2 s.
+- **Last apply:** Steam "Sent", Discord "Skipped · no discord token configured" (or "Off"
+  when switched off); the same rows appear on the Services page with "Applied again when it
+  starts: steam.exe / Discord.exe".
+- **Warnings:** with Discord on and no token the warning from the daemon is shown below the
+  status card.
+- **Daemon offline:** quit awayd from the tray → Overview says awayd is not running.

@@ -162,6 +162,34 @@ pub fn notice<R>(ui: &mut egui::Ui, kind: NoticeKind, add: impl FnOnce(&mut egui
         .inner
 }
 
+#[derive(Clone, Copy)]
+pub enum PillKind {
+    Success,
+    Warning,
+    Error,
+    Neutral,
+}
+
+/// Small rounded status label ("Sent", "Skipped", …); the word carries the meaning, the colour
+/// only repeats it.
+pub fn pill(ui: &mut egui::Ui, kind: PillKind, text: &str) -> egui::Response {
+    let p = theme::palette(ui.ctx());
+    let (fg, bg) = match kind {
+        PillKind::Success => (p.success_fg, p.success_bg),
+        PillKind::Warning => (p.warn_fg, p.warn_bg),
+        PillKind::Error => (p.error_fg, p.error_bg),
+        PillKind::Neutral => (p.text, p.nav_selected),
+    };
+    egui::Frame::none()
+        .fill(bg)
+        .rounding(10.0)
+        .inner_margin(egui::Margin::symmetric(9.0, 2.0))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(12.0).strong().color(fg));
+        })
+        .response
+}
+
 /// A notice that is just one text.
 pub fn notice_text(ui: &mut egui::Ui, kind: NoticeKind, text: impl Into<String>) {
     let text = text.into();
