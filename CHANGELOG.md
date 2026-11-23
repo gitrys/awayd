@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Discord token as missing.
 - awayd logs a warning when it cannot download the country list instead of silently answering
   with an empty list.
+- Log rotation kept one file more than **Log files to keep** says: `advanced.log_max_files` now
+  counts the current `awayd.log` too (default 5: `awayd.log` and `awayd.log.1` to `.4`, about
+  25 MB). Rotated files beyond the limit, e.g. `awayd.log.5` left by 0.3.0, are deleted at the
+  next rotation; with 1 the log file starts over.
+- A failed log rotation (e.g. another program holds `awayd.log` open without delete sharing)
+  dropped the log line that triggered it and was retried on every line; awayd now keeps
+  writing to the current file and tries again later.
 
 ## [0.3.0] - 2026-11-23
 

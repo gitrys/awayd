@@ -12,6 +12,15 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 - **awayd not running:** `awayctl doctor` and the settings report "not running" at once (no 2 s
   delay).
 
+## 2026-11-23 – Log rotation
+
+- **File count:** set **Log file size before rotation** to 1 MB and **Log files to keep** to 3,
+  restart awayd, raise the log level to Debug and let it run (or start/stop Steam often) →
+  `state\logs` holds at most `awayd.log`, `.1`, `.2`; an `awayd.log.5` from before is gone after
+  the first rotation; **Settings → Logs** still scrolls back into the rotated files.
+- **Held file:** open `awayd.log` in a program that locks it, until it passes the size limit →
+  log lines keep arriving in `awayd.log`; after closing that program the next rotation works.
+
 ## 2026-11-22 – Fix plan 1
 
 - **Discord start re-apply (#76), open question:** with a Discord token stored, does Discord

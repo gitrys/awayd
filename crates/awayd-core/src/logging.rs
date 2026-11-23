@@ -121,24 +121,30 @@ fn stderr_mirror_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// `awayd.log` plus rotated `awayd.log.1` (newest) … `awayd.log.{max_files - 1}` (oldest):
+/// `max_files` counts the current file too.
 struct RotatingWriter {
     path: std::path::PathBuf,
     max_bytes: u64,
     max_files: usize,
     file: File,
     size: u64,
+    /// Size at which the next rotation is tried; moved on after a failed rotation.
+    rotate_at: u64,
 }
 
 impl RotatingWriter {
     fn open(path: &Path, max_bytes: u64, max_files: usize) -> std::io::Result<Self> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
         let size = file.metadata()?.len();
+        let max_bytes = max_bytes.max(1024);
         Ok(Self {
             path: path.to_path_buf(),
-            max_bytes: max_bytes.max(1024),
+            max_bytes,
             max_files: max_files.max(1),
             file,
             size,
+            rotate_at: max_bytes,
         })
     }
 
@@ -150,7 +156,19 @@ impl RotatingWriter {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("awayd.log");
-        for i in (1..self.max_files).rev() {
+        let kept = self.max_files - 1;
+        remove_rotated_beyond(parent, base, kept);
+        if kept == 0 {
+            // Only the current file is kept: start it over.
+            self.file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&self.path)?;
+            self.size = 0;
+            return Ok(());
+        }
+        for i in (1..kept).rev() {
             let from = parent.join(format!("{base}.{i}"));
             let to = parent.join(format!("{base}.{}", i + 1));
             if from.is_file() {
@@ -172,13 +190,41 @@ impl RotatingWriter {
     }
 
     fn write_line(&mut self, line: &[u8]) -> std::io::Result<()> {
-        if self.size + line.len() as u64 > self.max_bytes {
-            self.rotate()?;
+        if self.size + line.len() as u64 > self.rotate_at {
+            if self.rotate().is_ok() {
+                self.rotate_at = self.max_bytes;
+            } else {
+                // E.g. another program holds the file without delete sharing: keep writing to
+                // the current file (no lost lines) and try again after another tenth.
+                self.rotate_at = self.size + (self.max_bytes / 10).max(1024);
+            }
         }
         self.file.write_all(line)?;
         self.file.write_all(b"\n")?;
         self.size += line.len() as u64 + 1;
         Ok(())
+    }
+}
+
+/// Delete `{base}.{n}` for every `n > kept`: left over from an older version (which kept one
+/// file more) or from a higher `log_max_files`.
+fn remove_rotated_beyond(dir: &Path, base: &str, kept: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let prefix = format!("{base}.");
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(n) = name
+            .to_str()
+            .and_then(|s| s.strip_prefix(&prefix))
+            .and_then(|s| s.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        if n > kept {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -334,5 +380,100 @@ mod tests {
             chrono::DateTime::parse_from_rfc3339(&ts).is_ok(),
             "not RFC 3339: {ts}"
         );
+    }
+
+    /// 99 bytes, 100 with the newline: 10 lines fill the smallest log file (1024 bytes).
+    fn line(i: usize) -> Vec<u8> {
+        format!("{i:0>99}").into_bytes()
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn lines_in(path: &Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn rotation_keeps_max_files_including_the_current_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("awayd.log");
+        // Left over from 0.3.0 (one file more) or a higher setting; not ours: kept.
+        for stale in ["awayd.log.3", "awayd.log.7", "awayd.log.bak", "other.log.5"] {
+            std::fs::write(dir.path().join(stale), "old").unwrap();
+        }
+        let mut w = RotatingWriter::open(&log, 1024, 3).unwrap();
+        for i in 0..60 {
+            w.write_line(&line(i)).unwrap();
+        }
+        assert_eq!(
+            names(dir.path()),
+            [
+                "awayd.log",
+                "awayd.log.1",
+                "awayd.log.2",
+                "awayd.log.bak",
+                "other.log.5"
+            ]
+        );
+        // Newest lines in the current file, the ones before in .1.
+        assert_eq!(lines_in(&log).last().unwrap().as_bytes(), line(59));
+        assert_eq!(
+            lines_in(&dir.path().join("awayd.log.1"))
+                .last()
+                .unwrap()
+                .as_bytes(),
+            line(49)
+        );
+    }
+
+    #[test]
+    fn one_file_starts_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("awayd.log");
+        std::fs::write(dir.path().join("awayd.log.1"), "old").unwrap();
+        let mut w = RotatingWriter::open(&log, 1024, 1).unwrap();
+        for i in 0..25 {
+            w.write_line(&line(i)).unwrap();
+        }
+        assert_eq!(names(dir.path()), ["awayd.log"]);
+        let lines = lines_in(&log);
+        assert_eq!(lines.len(), 5, "{lines:?}");
+        assert_eq!(lines.last().unwrap().as_bytes(), line(24));
+    }
+
+    #[test]
+    fn failed_rotation_loses_no_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("awayd.log");
+        // A directory named like the first rotated file blocks the rename.
+        let blocker = dir.path().join("awayd.log.1");
+        std::fs::create_dir(&blocker).unwrap();
+        std::fs::write(blocker.join("x"), "x").unwrap();
+        let mut w = RotatingWriter::open(&log, 1024, 3).unwrap();
+        for i in 0..30 {
+            w.write_line(&line(i)).unwrap();
+        }
+        let lines = lines_in(&log);
+        assert_eq!(lines.len(), 30);
+        assert_eq!(lines[29].as_bytes(), line(29));
+
+        // Once the rename works again, the next attempt rotates.
+        std::fs::remove_dir_all(&blocker).unwrap();
+        for i in 30..45 {
+            w.write_line(&line(i)).unwrap();
+        }
+        assert!(blocker.is_file());
+        assert!(lines_in(&log).len() < 15);
     }
 }

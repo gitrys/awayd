@@ -2636,7 +2636,7 @@ impl AwaydSettingsApp {
         card::row(
             ui,
             "Log files to keep",
-            Some("Takes effect when awayd restarts"),
+            Some("Including the current file. Takes effect when awayd restarts"),
             |ui| {
                 let r = ui.add(egui::DragValue::new(&mut adv.log_max_files).range(1..=50));
                 if r.drag_stopped() || r.lost_focus() {
