@@ -35,14 +35,14 @@ cargo build --release
 3. Open **Settings** from the tray menu (or run `awayd-settings.exe`).
 4. Complete the wizard: services (Steam on, Discord off by default; the Discord token is only
    asked for when you switch Discord on), country/region, work hours. Change the services later
-   in **Settings → Scheduler → Services** or in `config.toml` (`[backends.discord]`,
+   in **Settings → Services** or in `config.toml` (`[backends.discord]`,
    `[backends.steam]`, `enabled = true|false`).
 5. Register autostart: `awayctl.exe install-autostart`
 
 ## Autostart
 
 One `HKCU\Run` entry (value `awayd`, quoted path) starts `awayd.exe` at login (no admin).
-Toggle it in **Settings → Scheduler → Start awayd at login**, or from the command line:
+Toggle it in **Settings → General → Start awayd at login**, or from the command line:
 
 ```powershell
 awayctl.exe install-autostart

@@ -134,3 +134,31 @@ Flows to cover in the next requested E2E run. Remove entries once they have been
 - **Screen reader:** start Narrator (Ctrl+Win+Enter), tab through the settings → buttons,
   fields and checkboxes are read with their names; the icon buttons read "Pick date range",
   "Pick time", "Remove vacation", "Previous/Next month", "Previous/Next year".
+
+## 2026-11-23 – Plan UI-1 (redesigned settings window, theme choice)
+
+Older entries above name the old places: "Scheduler" is now split into **Mode** (work hours),
+**Days off** (region, holidays, vacations) and **Services**; autostart, zoom and the wizard
+button are under **General**.
+
+- **Layout:** open the settings → sidebar with Mode, Days off, Services, General, Logs; each
+  page shows its cards; nothing from the old tabs is missing (holiday list flyout, vacations
+  with date picker, token field, autostart repair texts, zoom slider, log pop-out).
+- **Theme:** General → Display → "Light" and "Dark" switch at once; "Use Windows setting"
+  follows Windows (Settings → Personalization → Colors → app mode) while the window is open;
+  the choice is kept after closing and reopening. Read all pages in both themes (text, grey
+  descriptions, warnings, the Discord risk note, the status bar).
+- **Switches:** Services (Steam/Discord), "Start awayd at login" and "Same hours for all work
+  days" toggle with the mouse and with Tab + Space; saving and autostart behave as before;
+  "Same hours" off makes the day rows editable, on makes the Start/End row editable.
+- **Status bar:** a save shows "✔ saved" bottom left and fades out; an error (e.g. a vacation
+  with reversed dates) stays red; right side shows the daemon state and the config path.
+- **Banners:** different daemon version or an unreadable `config.toml` → notice at the top of
+  the page; "Reload" and "Back up and start over" still work.
+- **Window size:** a `settings_ui.json` from 0.2.0 (580×480) opens at least about 640×440 and
+  is saved with at least 720×480 when the window closes; without the file the window opens at
+  960×680; it cannot be made smaller than about 640×440.
+- **Narrator:** sidebar entries are read with their name and "selected"; switches with their
+  name and on/off.
+- **Font:** the text uses Segoe UI like the Windows settings; if it looks like egui's own
+  font instead, the log has "Segoe UI not loaded" with the reason.

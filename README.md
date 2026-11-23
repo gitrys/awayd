@@ -11,7 +11,7 @@ overrides ("stay invisible for 2 hours").
 > with **your user token** (the token of your normal Discord account) and a browser user agent.
 > Automating a user account this way is very likely against Discord's Terms of Service
 > ("self-bot") and may get your account restricted or banned. Discord is therefore **switched
-> off** in a new installation; switch it on (Settings → Scheduler → Services) only if you accept
+> off** in a new installation; switch it on (Settings → Services) only if you accept
 > that risk.
 
 awayd is an independent project. It is **not affiliated with, endorsed by or sponsored by Valve
@@ -48,7 +48,7 @@ owners and are used here only to describe what the program works with.
    services, country/region and work hours. The Discord token is only asked for when you switch
    Discord on (see the warning above).
 
-   The services can be changed later in **Settings → Scheduler → Services** or in
+   The services can be changed later in **Settings → Services** or in
    `config\config.toml`:
 
    ```toml
@@ -60,7 +60,7 @@ owners and are used here only to describe what the program works with.
    ```
 
    A service without entry counts as switched on (configurations from 0.1.0 keep both).
-4. Start awayd automatically at login: tick **Settings → Scheduler → Start awayd at login**, or
+4. Start awayd automatically at login: switch on **Settings → General → Start awayd at login**, or
    use the CLI:
 
    ```powershell

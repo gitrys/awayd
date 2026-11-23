@@ -5,6 +5,7 @@ mod app;
 mod background;
 mod client;
 mod pages;
+mod theme;
 mod ui_prefs;
 mod widgets;
 mod zoom_preview;
@@ -21,7 +22,10 @@ fn main() {
     let prefs = SettingsUiPrefs::load();
     let (inner_w, inner_h) =
         app::AwaydSettingsApp::inner_size_from_store(prefs.width, prefs.height, prefs.zoom);
-    let mut viewport = egui::ViewportBuilder::default().with_inner_size([inner_w, inner_h]);
+    // Sidebar plus a usable content column.
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([inner_w, inner_h])
+        .with_min_inner_size([640.0, 440.0]);
     if let (Some(x), Some(y)) = (prefs.pos_x, prefs.pos_y) {
         viewport = viewport.with_position([x, y]);
     }

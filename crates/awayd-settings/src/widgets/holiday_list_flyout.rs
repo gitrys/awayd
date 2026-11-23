@@ -126,10 +126,11 @@ impl HolidayListFlyout {
                     }
                 });
 
+                let p = crate::theme::palette(ui.ctx());
                 if !daemon_ok {
-                    ui.colored_label(egui::Color32::YELLOW, "Daemon offline — start awayd first.");
+                    ui.colored_label(p.warn_fg, "Daemon offline — start awayd first.");
                 } else if let Some(err) = &self.error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, err);
+                    ui.colored_label(p.error_fg, err);
                 } else if self.holidays.is_empty() {
                     ui.label("No public holidays for this year/region.");
                 } else {

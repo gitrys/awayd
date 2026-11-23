@@ -45,8 +45,8 @@ impl LogViewState {
 
 fn level_color(level: &str, visuals: &egui::Visuals) -> egui::Color32 {
     match level.to_ascii_uppercase().as_str() {
-        "ERROR" => egui::Color32::from_rgb(220, 80, 80),
-        "WARN" | "WARNING" => egui::Color32::from_rgb(220, 180, 60),
+        "ERROR" => visuals.error_fg_color,
+        "WARN" | "WARNING" => visuals.warn_fg_color,
         _ => visuals.text_color(),
     }
 }
@@ -102,9 +102,9 @@ pub fn show_logs_controls(ui: &mut egui::Ui, state: &mut LogViewState, daemon_ok
         .small(),
     );
     if !daemon_ok {
-        ui.label(
-            egui::RichText::new("Daemon offline — showing saved log files only.")
-                .color(egui::Color32::YELLOW),
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            "Daemon offline — showing saved log files only.",
         );
     }
 

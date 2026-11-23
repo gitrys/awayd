@@ -1,16 +1,17 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
-//! Persisted window size, position, and UI zoom for awayd-settings.
+//! Persisted window size, position, UI zoom and theme for awayd-settings.
 
+use crate::theme::ThemeChoice;
 use awayd_core::config::paths;
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_WIDTH: f32 = 580.0;
-const DEFAULT_HEIGHT: f32 = 480.0;
+const DEFAULT_WIDTH: f32 = 960.0;
+const DEFAULT_HEIGHT: f32 = 680.0;
 const DEFAULT_ZOOM: f32 = 1.0;
-const MIN_WIDTH: f32 = 400.0;
-const MAX_WIDTH: f32 = 1400.0;
-const MIN_HEIGHT: f32 = 360.0;
-const MAX_HEIGHT: f32 = 1000.0;
+const MIN_WIDTH: f32 = 720.0;
+const MAX_WIDTH: f32 = 1800.0;
+const MIN_HEIGHT: f32 = 480.0;
+const MAX_HEIGHT: f32 = 1200.0;
 const MIN_ZOOM: f32 = 0.75;
 const MAX_ZOOM: f32 = 1.5;
 
@@ -24,6 +25,9 @@ pub struct SettingsUiPrefs {
     pub pos_x: Option<f32>,
     #[serde(default)]
     pub pos_y: Option<f32>,
+    /// Missing in files written before the theme setting existed: follow Windows.
+    #[serde(default)]
+    pub theme: ThemeChoice,
 }
 
 impl Default for SettingsUiPrefs {
@@ -34,6 +38,7 @@ impl Default for SettingsUiPrefs {
             zoom: DEFAULT_ZOOM,
             pos_x: None,
             pos_y: None,
+            theme: ThemeChoice::System,
         }
     }
 }
@@ -104,5 +109,26 @@ mod tests {
         assert_eq!(p.zoom, DEFAULT_ZOOM);
         assert!(p.pos_x.is_none());
         assert!(p.pos_y.is_none());
+        assert_eq!(p.theme, ThemeChoice::System);
+    }
+
+    #[test]
+    fn file_without_theme_follows_windows() {
+        let old = r#"{"width":580.0,"height":480.0,"zoom":1.0,"pos_x":10.0,"pos_y":20.0}"#;
+        let p: SettingsUiPrefs = serde_json::from_str(old).unwrap();
+        assert_eq!(p.theme, ThemeChoice::System);
+        assert_eq!(p.pos_x, Some(10.0));
+    }
+
+    #[test]
+    fn theme_round_trips() {
+        let p = SettingsUiPrefs {
+            theme: ThemeChoice::Dark,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains(r#""theme":"dark""#), "{json}");
+        let back: SettingsUiPrefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.theme, ThemeChoice::Dark);
     }
 }

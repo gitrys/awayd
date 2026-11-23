@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Settings: theme choice under **General → Display** ("Use Windows setting", "Light",
+  "Dark"), stored in `settings_ui.json`. Until now the window followed the Windows app theme
+  without a choice.
+
+### Changed
+
+- The settings window is redesigned in the style of the Windows 11 settings app: a sidebar
+  with the pages **Mode**, **Days off**, **Services**, **General** and **Logs** replaces the
+  three tabs, settings are grouped in cards, light and dark colours are checked for contrast,
+  and Segoe UI is used when Windows has it. Services, autostart and "Same hours for all work
+  days" are switches (the last one replaces the two opposite checkboxes "Use same hours…" and
+  "Use custom table"). The result of the last action, the daemon state and the config file
+  are shown in a status bar at the bottom. The default window size is 960×680.
+
 ## [0.2.0] - 2026-11-23
 
 ### Upgrading from 0.1.0

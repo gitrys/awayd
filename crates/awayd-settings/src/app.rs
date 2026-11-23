@@ -16,17 +16,22 @@ use crate::pages::logs_page::{
     log_popout_viewport_id, show_logs_docked_placeholder, show_logs_embedded_tab, show_logs_full,
     LogViewState, LOG_POPOUT_DEFAULT_SIZE,
 };
+use crate::theme::{self, ThemeChoice};
 use crate::ui_prefs::SettingsUiPrefs;
+use crate::widgets::card::{self, NoticeKind};
 use crate::widgets::date_range_picker::{show_date_range_field, DateRangeFieldState};
 use crate::widgets::holiday_list_flyout::{HolidayFlyoutAction, HolidayListFlyout};
+use crate::widgets::nav::nav_item;
 use crate::widgets::searchable_picker::SearchablePicker;
 use crate::widgets::subdiv_labels::{format_subdiv_label, subdiv_options_for_country};
+use crate::widgets::switch::switch;
 use crate::widgets::weekday_schedule_grid::{show_weekday_schedule_grid, WeekdayScheduleGridState};
 use crate::zoom_preview;
 use awayd_core::schedule::{normalize_schedule, schedule_days};
 
 const CREDENTIAL_STORED_PLACEHOLDER: &str = "••••••••••••";
-const STATUS_SLOT_H: f32 = 24.0;
+const SIDEBAR_WIDTH: f32 = 220.0;
+const STATUS_BAR_H: f32 = 28.0;
 const TOAST_FADE_IN: f64 = 0.15;
 const TOAST_HOLD: f64 = 0.55;
 const TOAST_FADE_OUT: f64 = 0.25;
@@ -79,11 +84,34 @@ struct VacationRangeUi {
     range: DateRangeFieldState,
 }
 
+/// Pages of the sidebar, in their order there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SettingsTab {
-    Scheduler,
-    Display,
+enum Page {
+    Mode,
+    DaysOff,
+    Services,
+    General,
     Logs,
+}
+
+impl Page {
+    const ALL: [Page; 5] = [
+        Page::Mode,
+        Page::DaysOff,
+        Page::Services,
+        Page::General,
+        Page::Logs,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Page::Mode => "Mode",
+            Page::DaysOff => "Days off",
+            Page::Services => "Services",
+            Page::General => "General",
+            Page::Logs => "Logs",
+        }
+    }
 }
 
 pub struct AwaydSettingsApp {
@@ -121,7 +149,7 @@ pub struct AwaydSettingsApp {
     window_track_after: f64,
     tracked_geometry: Option<(f32, f32, f32, f32)>,
     tracked_geometry_since: f64,
-    active_tab: SettingsTab,
+    active_page: Page,
     log_view: Option<LogViewState>,
     log_popout_open: bool,
     /// Set when an existing `config.toml` could not be read; blocks saving so the shown
@@ -215,6 +243,7 @@ enum ConfigErrorAction {
 
 impl AwaydSettingsApp {
     pub fn new(cc: &eframe::CreationContext<'_>, ui_prefs: SettingsUiPrefs) -> Self {
+        theme::install(&cc.egui_ctx, ui_prefs.theme);
         let zoom = ui_prefs.zoom;
         cc.egui_ctx.set_zoom_factor(zoom);
         // One worker thread: background requests (see `background::Job`) run there while the
@@ -267,7 +296,7 @@ impl AwaydSettingsApp {
             window_track_after: f64::MAX,
             tracked_geometry: None,
             tracked_geometry_since: 0.0,
-            active_tab: SettingsTab::Scheduler,
+            active_page: Page::Mode,
             log_view: None,
             log_popout_open: false,
             config_error: None,
@@ -566,49 +595,119 @@ impl AwaydSettingsApp {
         }
     }
 
-    fn show_status_slot(&self, ui: &mut egui::Ui) {
-        let width = ui.available_width();
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(width, STATUS_SLOT_H), egui::Sense::hover());
+    /// Bottom bar: result of the last action on the left (successes fade out, errors stay),
+    /// daemon state and config file on the right.
+    fn show_status_bar(&self, ui: &mut egui::Ui) {
+        let p = theme::palette(ui.ctx());
+        ui.horizontal_centered(|ui| {
+            if let Some(status) = &self.status {
+                let alpha = self.status_opacity();
+                if alpha >= 0.01 {
+                    let (color, prefix) = match status.kind {
+                        StatusKind::Success => (p.success_fg, "✔"),
+                        StatusKind::Error => (p.error_fg, "✖"),
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("{prefix} {}", status.text))
+                            .size(12.5)
+                            .color(color.gamma_multiply(alpha)),
+                    );
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mode = if paths::is_portable() {
+                    "portable mode"
+                } else {
+                    "installed"
+                };
+                card::secondary_label(
+                    ui,
+                    format!(
+                        "{} · {} · {mode}",
+                        daemon_status_label(self.daemon_ok, self.daemon_version.as_deref()),
+                        paths::config_file().display()
+                    ),
+                );
+            });
+        });
+    }
 
-        let placeholder_fill = ui
-            .visuals()
-            .widgets
-            .noninteractive
-            .bg_fill
-            .gamma_multiply(0.12);
-        let placeholder_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-        ui.painter().rect(
-            rect,
-            2.0,
-            placeholder_fill,
-            egui::Stroke::new(1.0_f32, placeholder_stroke.color.gamma_multiply(0.25)),
-        );
+    /// Daemon state at the foot of the sidebar; the state is spelled out, the dot only
+    /// repeats it.
+    fn daemon_box(&self, ui: &mut egui::Ui) {
+        let p = theme::palette(ui.ctx());
+        egui::Frame::none()
+            .fill(p.card)
+            .stroke(egui::Stroke::new(1.0_f32, p.card_border))
+            .rounding(6.0)
+            .inner_margin(egui::Margin::same(10.0))
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                        if self.daemon_ok {
+                            ui.painter().circle_filled(rect.center(), 4.0, p.success_fg);
+                        } else {
+                            ui.painter().circle_stroke(
+                                rect.center(),
+                                3.5,
+                                egui::Stroke::new(1.5_f32, p.warn_fg),
+                            );
+                        }
+                        let text = if self.daemon_ok {
+                            "awayd is running"
+                        } else {
+                            "awayd is not running"
+                        };
+                        ui.label(egui::RichText::new(text).size(13.0).strong());
+                    });
+                    card::secondary_label(
+                        ui,
+                        daemon_status_label(self.daemon_ok, self.daemon_version.as_deref()),
+                    );
+                });
+            });
+    }
 
-        let Some(status) = &self.status else {
-            return;
-        };
-        let alpha = self.status_opacity();
-        if alpha < 0.01 {
-            return;
+    fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("awayd").size(17.0).strong());
+        card::secondary_label(ui, format!("Settings · v{}", awayd_core::VERSION));
+        ui.add_space(14.0);
+        for page in Page::ALL {
+            if nav_item(ui, page.label(), self.active_page == page).clicked() {
+                self.active_page = page;
+            }
+            ui.add_space(2.0);
         }
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.add_space(4.0);
+            self.daemon_box(ui);
+        });
+    }
 
-        let (base_fill, base_text) = match status.kind {
-            StatusKind::Success => (egui::Color32::from_rgb(72, 160, 88), egui::Color32::WHITE),
-            StatusKind::Error => (egui::Color32::from_rgb(180, 60, 60), egui::Color32::WHITE),
-        };
-        let fill = base_fill.gamma_multiply(alpha);
-        let text_color = base_text.gamma_multiply(alpha);
+    /// Version and config notices at the top of the content area.
+    fn banners_ui(&mut self, ui: &mut egui::Ui) {
+        if let Some(hint) = version_mismatch_hint(self.daemon_version.as_deref()) {
+            card::notice_text(ui, NoticeKind::Warning, hint);
+            ui.add_space(8.0);
+        }
+        if let Some(err) = self.config_error.clone() {
+            match config_error_banner(ui, &err) {
+                Some(ConfigErrorAction::Reload) => self.reload(),
+                Some(ConfigErrorAction::BackupAndStartOver) => self.backup_config_and_start_over(),
+                None => {}
+            }
+            ui.add_space(8.0);
+        }
+    }
 
-        let inner = rect.shrink2(egui::vec2(0.0, 1.0));
-        ui.painter().rect_filled(inner, 2.0, fill);
-        ui.painter().text(
-            inner.left_center() + egui::vec2(8.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            &status.text,
-            egui::FontId::proportional(14.0),
-            text_color,
-        );
+    fn set_theme_choice(&mut self, ctx: &egui::Context, choice: ThemeChoice) {
+        self.ui_prefs.theme = choice;
+        ctx.set_theme(choice);
+        self.flush_ui_prefs_save();
     }
 
     fn default_vacation_label(index: usize) -> String {
@@ -699,26 +798,30 @@ impl AwaydSettingsApp {
         commit
     }
 
-    /// One switch per service with its risk note and, while switched on, its credential
-    /// field. Returns true when a switch changed (the caller decides when to save).
+    /// One card per service with its switch, risk note and, while switched on, its
+    /// credential field. Returns true when a switch changed (the caller decides when to save).
     fn services_ui(&mut self, ui: &mut egui::Ui, widget_id: &str, credential_hint: &str) -> bool {
         let mut changed = false;
-        ui.label(egui::RichText::new("Services").strong());
         for b in backends::ALL {
             let mut on = self.config.backend_enabled(b.id);
-            if ui
-                .checkbox(&mut on, b.display_name)
-                .on_hover_text(format!("Let awayd set your {} status", b.display_name))
-                .changed()
-            {
-                self.config.set_backend_enabled(b.id, on);
-                changed = true;
-            }
-            ui.indent(b.id, |ui| {
+            card::card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    card::card_title(ui, b.display_name);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if switch(ui, &mut on, b.display_name)
+                            .on_hover_text(format!("Let awayd set your {} status", b.display_name))
+                            .changed()
+                        {
+                            self.config.set_backend_enabled(b.id, on);
+                            changed = true;
+                        }
+                    });
+                });
                 if let Some(note) = b.risk_note {
-                    ui.colored_label(ui.visuals().warn_fg_color, note);
+                    card::notice_text(ui, NoticeKind::Warning, note);
                 }
                 if let (true, Some(label)) = (on, b.credential_label) {
+                    card::divider(ui);
                     ui.label(format!("{label} ({credential_hint}):"));
                     if self.show_credential_field(ui, b.id, widget_id)
                         && self.credential_input_pending(b.id)
@@ -727,13 +830,15 @@ impl AwaydSettingsApp {
                     }
                 }
             });
+            ui.add_space(12.0);
         }
         if !backends::ALL
             .iter()
             .any(|b| self.config.backend_enabled(b.id))
         {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
+            card::notice_text(
+                ui,
+                NoticeKind::Warning,
                 "No service is switched on: awayd changes no status.",
             );
         }
@@ -899,7 +1004,24 @@ impl AwaydSettingsApp {
     }
 
     fn display_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Display");
+        card::card_title(ui, "Display");
+        let mut choice = self.ui_prefs.theme;
+        card::row(
+            ui,
+            "Theme",
+            Some("“Use Windows setting” follows the Windows app theme"),
+            |ui| {
+                // Right-to-left layout: added last is leftmost.
+                ui.selectable_value(&mut choice, ThemeChoice::Dark, "Dark");
+                ui.selectable_value(&mut choice, ThemeChoice::Light, "Light");
+                ui.selectable_value(&mut choice, ThemeChoice::System, "Use Windows setting");
+            },
+        );
+        if choice != self.ui_prefs.theme {
+            let ctx = ui.ctx().clone();
+            self.set_theme_choice(&ctx, choice);
+        }
+        card::divider(ui);
         if !self.zoom_dragging {
             self.zoom_pending = self.zoom_applied;
         }
@@ -982,7 +1104,7 @@ impl AwaydSettingsApp {
     }
 
     fn autostart_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Startup").strong());
+        card::card_title(ui, "Startup");
         let state = self.autostart_state.clone();
         let state = match state {
             Ok(s) => s,
@@ -998,11 +1120,16 @@ impl AwaydSettingsApp {
             }
         };
         let mut on = matches!(state, AutostartState::On { .. });
-        if ui
-            .checkbox(&mut on, "Start awayd at login")
-            .on_hover_text("Adds or removes the value \"awayd\" under HKCU\\…\\CurrentVersion\\Run")
-            .changed()
-        {
+        let mut toggled = false;
+        card::row(
+            ui,
+            "Start awayd at login",
+            Some("Adds or removes the value “awayd” under HKCU\\…\\CurrentVersion\\Run"),
+            |ui| {
+                toggled = switch(ui, &mut on, "Start awayd at login").changed();
+            },
+        );
+        if toggled {
             self.set_autostart(on);
         }
         match state {
@@ -1204,45 +1331,47 @@ impl eframe::App for AwaydSettingsApp {
         self.tick_status(ctx);
         self.track_window_geometry(ctx);
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("awayd");
-                ui.label(format!("v{}", awayd_core::VERSION));
-                ui.separator();
-                let daemon = daemon_status_label(self.daemon_ok, self.daemon_version.as_deref());
-                if self.daemon_ok {
-                    ui.label(egui::RichText::new(daemon).color(egui::Color32::GREEN));
-                } else {
-                    ui.label(egui::RichText::new(daemon).color(egui::Color32::YELLOW));
-                }
-            });
-            if let Some(hint) = version_mismatch_hint(self.daemon_version.as_deref()) {
-                ui.colored_label(ui.visuals().warn_fg_color, hint);
-            }
-            if let Some(err) = self.config_error.clone() {
-                match config_error_banner(ui, &err) {
-                    Some(ConfigErrorAction::Reload) => self.reload(),
-                    Some(ConfigErrorAction::BackupAndStartOver) => {
-                        self.backup_config_and_start_over()
-                    }
-                    None => {}
-                }
-            }
-            self.show_status_slot(ui);
-        });
+        let p = theme::palette(ctx);
+        egui::TopBottomPanel::bottom("status_bar")
+            .exact_height(STATUS_BAR_H)
+            .frame(
+                egui::Frame::none()
+                    .fill(p.sidebar)
+                    .inner_margin(egui::Margin::symmetric(14.0, 2.0)),
+            )
+            .show(ctx, |ui| self.show_status_bar(ui));
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.wizard {
-                self.wizard_ui(ui);
-            } else {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.active_tab, SettingsTab::Scheduler, "Scheduler");
-                    ui.selectable_value(&mut self.active_tab, SettingsTab::Display, "Display");
-                    ui.selectable_value(&mut self.active_tab, SettingsTab::Logs, "Logs");
-                });
-                ui.separator();
+        if !self.wizard {
+            egui::SidePanel::left("sidebar")
+                .resizable(false)
+                .exact_width(SIDEBAR_WIDTH)
+                .frame(
+                    egui::Frame::none()
+                        .fill(p.sidebar)
+                        .inner_margin(egui::Margin::symmetric(10.0, 14.0)),
+                )
+                .show(ctx, |ui| self.sidebar_ui(ui));
+        }
 
-                let logs_active = self.active_tab == SettingsTab::Logs || self.log_popout_open;
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(p.window)
+                    .inner_margin(egui::Margin {
+                        left: 28.0,
+                        right: 28.0,
+                        top: 22.0,
+                        bottom: 12.0,
+                    }),
+            )
+            .show(ctx, |ui| {
+                self.banners_ui(ui);
+                if self.wizard {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.wizard_ui(ui));
+                    return;
+                }
+
+                let logs_active = self.active_page == Page::Logs || self.log_popout_open;
                 if logs_active {
                     if self.log_view.is_none() {
                         self.log_view = Some(LogViewState::new());
@@ -1254,25 +1383,13 @@ impl eframe::App for AwaydSettingsApp {
                     self.log_view = None;
                 }
 
-                match self.active_tab {
-                    SettingsTab::Scheduler => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.scheduler_ui(ui);
-                            ui.separator();
-                            if ui.button("Run setup wizard again…").clicked() {
-                                self.wizard = true;
-                                self.wizard_step = 0;
-                            }
-                            ui.separator();
-                            self.autostart_ui(ui);
-                        });
-                    }
-                    SettingsTab::Display => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            self.display_ui(ui);
-                        });
-                    }
-                    SettingsTab::Logs => {
+                match self.active_page {
+                    Page::Logs => {
+                        card::page_header(
+                            ui,
+                            "Logs",
+                            "Live view of awayd.log. Tokens are redacted before they are written.",
+                        );
                         if self.log_popout_open {
                             let mut dock_logs = false;
                             show_logs_docked_placeholder(ui, &mut dock_logs);
@@ -1292,9 +1409,19 @@ impl eframe::App for AwaydSettingsApp {
                             );
                         }
                     }
+                    page => {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| match page {
+                                Page::Mode => self.mode_page(ui),
+                                Page::DaysOff => self.days_off_page(ui),
+                                Page::Services => self.services_page(ui),
+                                Page::General => self.general_page(ui),
+                                Page::Logs => {}
+                            });
+                    }
                 }
-            }
-        });
+            });
 
         if self.log_popout_open {
             let daemon_ok = self.daemon_ok;
@@ -1319,7 +1446,7 @@ impl eframe::App for AwaydSettingsApp {
             }
         }
 
-        if self.active_tab == SettingsTab::Logs || self.log_popout_open {
+        if self.active_page == Page::Logs || self.log_popout_open {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
 
@@ -1404,44 +1531,101 @@ impl AwaydSettingsApp {
         }
     }
 
-    fn scheduler_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Scheduler");
+    fn mode_page(&mut self, ui: &mut egui::Ui) {
+        card::page_header(
+            ui,
+            "Mode",
+            "How awayd decides between invisible and online.",
+        );
         let network_active = self.config.mode.kind == "network";
-        ui.add_enabled_ui(false, |ui| {
-            let mut network = network_active;
-            ui.checkbox(&mut network, "Use network mode (coming soon)");
+        card::card(ui, |ui| {
+            card::card_title(ui, "Mode");
+            ui.add_enabled_ui(false, |ui| {
+                let mut network = network_active;
+                ui.checkbox(&mut network, "Use network mode (coming soon)");
+            });
+            if network_active {
+                card::notice_text(
+                    ui,
+                    NoticeKind::Info,
+                    "Network mode is set in config.toml and stays active; the work hours below \
+                     are used only while it is off.",
+                );
+            }
         });
-        if network_active {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "Network mode is set in config.toml and stays active; the work hours below are \
-                 used only while it is off.",
+        ui.add_space(12.0);
+        let mut changed = false;
+        card::card(ui, |ui| {
+            card::card_title(ui, "Work hours");
+            card::secondary_label(
+                ui,
+                "Local time. A time is taken when you press Enter, leave the field or confirm \
+                 the clock.",
             );
-        }
-        ui.separator();
-        let mut schedule_changed = false;
-        if self.region_pickers(ui) {
-            schedule_changed = true;
-        }
-        ui.separator();
-        if show_weekday_schedule_grid(ui, "sched_days", &mut self.schedule_grid) {
-            self.config.schedule.days = Some(self.schedule_grid.commit_days_for_save());
-            schedule_changed = true;
-        }
-
-        ui.separator();
-        if self.services_ui(ui, "sched_credential", "leave empty to keep existing") {
-            schedule_changed = true;
-        }
-
-        ui.separator();
-        if self.vacations_ui(ui) {
-            schedule_changed = true;
-        }
-
-        if schedule_changed {
+            if show_weekday_schedule_grid(ui, "sched_days", &mut self.schedule_grid) {
+                self.config.schedule.days = Some(self.schedule_grid.commit_days_for_save());
+                changed = true;
+            }
+        });
+        if changed {
             self.save_schedule_if_valid();
         }
+    }
+
+    fn days_off_page(&mut self, ui: &mut egui::Ui) {
+        card::page_header(
+            ui,
+            "Days off",
+            "On these days you are online all day. Used with the work hours mode.",
+        );
+        let mut changed = false;
+        card::card(ui, |ui| {
+            card::card_title(ui, "Public holidays");
+            changed |= self.region_pickers(ui);
+        });
+        ui.add_space(12.0);
+        card::card(ui, |ui| {
+            card::card_title(ui, "Vacations");
+            card::secondary_label(ui, "Treated like public holidays: online all day.");
+            changed |= self.vacations_ui(ui);
+        });
+        if changed {
+            self.save_schedule_if_valid();
+        }
+    }
+
+    fn services_page(&mut self, ui: &mut egui::Ui) {
+        card::page_header(
+            ui,
+            "Services",
+            "Which statuses awayd changes. A switched-off service is never contacted and its \
+             token is not read.",
+        );
+        if self.services_ui(ui, "sched_credential", "leave empty to keep existing") {
+            self.save_schedule_if_valid();
+        }
+    }
+
+    fn general_page(&mut self, ui: &mut egui::Ui) {
+        card::page_header(ui, "General", "Startup, display and the setup wizard.");
+        card::card(ui, |ui| self.autostart_ui(ui));
+        ui.add_space(12.0);
+        card::card(ui, |ui| self.display_ui(ui));
+        ui.add_space(12.0);
+        card::card(ui, |ui| {
+            card::card_title(ui, "Setup");
+            card::row(
+                ui,
+                "Setup wizard",
+                Some("Services, region and work hours step by step"),
+                |ui| {
+                    if ui.button("Run setup wizard again…").clicked() {
+                        self.wizard = true;
+                        self.wizard_step = 0;
+                    }
+                },
+            );
+        });
     }
 
     fn try_commit_vacation_draft(&mut self) -> bool {
@@ -1468,7 +1652,6 @@ impl AwaydSettingsApp {
     }
 
     fn vacations_ui(&mut self, ui: &mut egui::Ui) -> bool {
-        ui.label("Vacations (treated like holidays — online):");
         let mut changed = false;
         let mut remove: Option<usize> = None;
         self.sync_vacation_range_states();
@@ -1550,13 +1733,14 @@ impl AwaydSettingsApp {
 /// Persistent notice while `config.toml` is unreadable.
 fn config_error_banner(ui: &mut egui::Ui, err: &str) -> Option<ConfigErrorAction> {
     let mut action = None;
-    ui.group(|ui| {
-        ui.colored_label(
-            ui.visuals().error_fg_color,
-            "config.toml could not be read — changes are not saved.",
+    card::notice(ui, NoticeKind::Error, |ui| {
+        ui.label(
+            egui::RichText::new("config.toml could not be read — changes are not saved.").strong(),
         );
         ui.label(format!("{}: {err}", paths::config_file().display()));
         ui.horizontal(|ui| {
+            // Buttons keep the normal text colour on their own background.
+            ui.visuals_mut().override_text_color = Some(theme::palette(ui.ctx()).text);
             if ui
                 .button("Reload")
                 .on_hover_text("Read config.toml again after fixing it by hand")

@@ -139,16 +139,20 @@ pub fn show_weekday_schedule_grid(
 ) -> bool {
     let mut changed = false;
 
-    ui.label("Work hours by day");
-
+    // One switch for both former checkboxes ("same hours" / "custom table" were each
+    // other's inverse).
     let mut linked = state.linked;
-    if ui
-        .checkbox(&mut linked, "Use same hours for all active days")
-        .changed()
-    {
-        changed = true;
-        state.set_linked(linked);
-    }
+    super::card::row(
+        ui,
+        "Same hours for all work days",
+        Some("Off: each day has its own start and end."),
+        |ui| {
+            if super::switch::switch(ui, &mut linked, "Same hours for all work days").changed() {
+                changed = true;
+                state.set_linked(linked);
+            }
+        },
+    );
 
     ui.horizontal(|ui| {
         let (mut start, mut end) = state.master_times_from_fields();
@@ -177,19 +181,14 @@ pub fn show_weekday_schedule_grid(
         });
     });
 
-    let mut custom = !state.linked;
-    if ui.checkbox(&mut custom, "Use custom table").changed() {
-        changed = true;
-        state.set_linked(!custom);
-    }
-
+    super::card::divider(ui);
     egui::Grid::new(format!("{id_source}_grid"))
         .num_columns(4)
         .spacing([12.0, 4.0])
         .min_col_width(72.0)
         .show(ui, |ui| {
             ui.label(egui::RichText::new("Day").strong());
-            ui.label(egui::RichText::new("On?").strong());
+            ui.label(egui::RichText::new("Work day").strong());
             ui.label(egui::RichText::new("Start").strong());
             ui.label(egui::RichText::new("End").strong());
             ui.end_row();
