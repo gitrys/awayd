@@ -52,13 +52,24 @@ pub fn divider(ui: &mut egui::Ui) {
     );
 }
 
-/// One setting: name and optional description on the left, the control on the right.
+/// Narrower rows than this put the control under the text: beside a control the text would
+/// be squeezed into a few pixels and wrap inside words.
+const ROW_STACK_BELOW: f32 = 380.0;
+
+/// One setting: name and optional description on the left, the control on the right (with
+/// little width: below the text). Several controls are added right to left.
 pub fn row(
     ui: &mut egui::Ui,
     label: &str,
     description: Option<&str>,
     control: impl FnOnce(&mut egui::Ui),
 ) {
+    if ui.available_width() < ROW_STACK_BELOW {
+        row_stacked(ui, label, description, |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), control);
+        });
+        return;
+    }
     divider(ui);
     // Control first (from the right), then the text in the space that is left, wrapped:
     // laid out the other way round a long description ran under the control.
@@ -74,6 +85,54 @@ pub fn row(
             });
         });
     });
+}
+
+/// Like `Ui::columns`, but each column is laid out left-aligned: egui's columns use a
+/// justified layout, which stretched the word gaps of every wrapped text.
+pub fn columns<R>(ui: &mut egui::Ui, count: usize, add: impl FnOnce(&mut [egui::Ui]) -> R) -> R {
+    let spacing = ui.spacing().item_spacing.x;
+    let total_spacing = spacing * (count as f32 - 1.0);
+    let width = ((ui.available_width() - total_spacing) / count as f32).max(1.0);
+    let top_left = ui.cursor().min;
+    let bottom = ui.max_rect().bottom();
+    let mut cols: Vec<egui::Ui> = (0..count)
+        .map(|i| {
+            let pos = top_left + egui::vec2(i as f32 * (width + spacing), 0.0);
+            let rect = egui::Rect::from_min_max(pos, egui::pos2(pos.x + width, bottom));
+            let mut col = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("card_columns", i))
+                    .max_rect(rect)
+                    .layout(Layout::top_down(Align::Min)),
+            );
+            col.set_width(width);
+            col
+        })
+        .collect();
+    let result = add(&mut cols);
+    let height = cols
+        .iter()
+        .map(|c| c.min_rect().height())
+        .fold(0.0, f32::max);
+    let total = egui::vec2(width * count as f32 + total_spacing, height);
+    ui.advance_cursor_after_rect(egui::Rect::from_min_size(top_left, total));
+    result
+}
+
+/// One setting with wide controls (button groups, sliders): text first, the controls on the
+/// next line, added left to right.
+pub fn row_stacked(
+    ui: &mut egui::Ui,
+    label: &str,
+    description: Option<&str>,
+    control: impl FnOnce(&mut egui::Ui),
+) {
+    divider(ui);
+    ui.label(label);
+    if let Some(d) = description {
+        secondary_label(ui, d);
+    }
+    ui.horizontal_wrapped(control);
 }
 
 /// Selectable card with a radio mark, title and description (one of several choices).

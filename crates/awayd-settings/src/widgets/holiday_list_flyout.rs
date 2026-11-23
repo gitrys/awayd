@@ -115,7 +115,7 @@ impl HolidayListFlyout {
             ui.label("No public holidays for this year and region.");
         } else {
             let half = self.holidays.len().div_ceil(2);
-            ui.columns(2, |cols| {
+            super::card::columns(ui, 2, |cols| {
                 for (col, chunk) in cols.iter_mut().zip(self.holidays.chunks(half)) {
                     for h in chunk {
                         col.horizontal(|ui| {

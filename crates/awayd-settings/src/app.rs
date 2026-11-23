@@ -34,6 +34,10 @@ use awayd_core::schedule::{normalize_schedule, schedule_days};
 const CREDENTIAL_STORED_PLACEHOLDER: &str = "••••••••••••";
 const SIDEBAR_WIDTH: f32 = 200.0;
 const STATUS_BAR_H: f32 = 26.0;
+/// Width of the vacation name fields.
+const VACATION_NAME_W: f32 = 160.0;
+/// Content width from which the General page uses two columns.
+const GENERAL_TWO_COLUMNS_W: f32 = 760.0;
 const TOAST_FADE_IN: f64 = 0.15;
 const TOAST_HOLD: f64 = 0.55;
 const TOAST_FADE_OUT: f64 = 0.25;
@@ -1372,15 +1376,14 @@ impl AwaydSettingsApp {
     fn display_ui(&mut self, ui: &mut egui::Ui) {
         card::card_title(ui, "Display");
         let mut choice = self.ui_prefs.theme;
-        card::row(
+        card::row_stacked(
             ui,
             "Theme",
             Some("“Use Windows setting” follows the Windows app theme"),
             |ui| {
-                // Right-to-left layout: added last is leftmost.
-                ui.selectable_value(&mut choice, ThemeChoice::Dark, "Dark");
-                ui.selectable_value(&mut choice, ThemeChoice::Light, "Light");
                 ui.selectable_value(&mut choice, ThemeChoice::System, "Use Windows setting");
+                ui.selectable_value(&mut choice, ThemeChoice::Light, "Light");
+                ui.selectable_value(&mut choice, ThemeChoice::Dark, "Dark");
             },
         );
         if choice != self.ui_prefs.theme {
@@ -1391,25 +1394,13 @@ impl AwaydSettingsApp {
             self.zoom_pending = self.zoom_applied;
         }
         let zoom_pct = (self.zoom_pending * 100.0).round() as i32;
-        card::row(
+        card::row_stacked(
             ui,
             &format!("Zoom {zoom_pct} %"),
             Some("75 to 150 %. A text sample shows the size while you drag."),
             |ui| {
                 let ctx = ui.ctx().clone();
-                // Right-to-left: Reset is rightmost, the slider left of it.
                 let at_default = (self.zoom_applied - 1.0).abs() < 0.001;
-                ui.add_enabled_ui(!at_default, |ui| {
-                    if ui
-                        .button("Reset")
-                        .on_hover_text("Reset zoom to 100%")
-                        .clicked()
-                    {
-                        self.apply_zoom(1.0, &ctx);
-                        self.zoom_dragging = false;
-                        self.flush_ui_prefs_save();
-                    }
-                });
                 ui.spacing_mut().slider_width = SETTINGS_SLIDER_WIDTH;
                 let slider =
                     ui.add(egui::Slider::new(&mut self.zoom_pending, 0.75..=1.5).show_value(false));
@@ -1423,6 +1414,17 @@ impl AwaydSettingsApp {
                     self.zoom_dragging = false;
                     self.flush_ui_prefs_save();
                 }
+                ui.add_enabled_ui(!at_default, |ui| {
+                    if ui
+                        .button("Reset")
+                        .on_hover_text("Reset zoom to 100%")
+                        .clicked()
+                    {
+                        self.apply_zoom(1.0, &ctx);
+                        self.zoom_dragging = false;
+                        self.flush_ui_prefs_save();
+                    }
+                });
             },
         );
 
@@ -2053,7 +2055,7 @@ impl AwaydSettingsApp {
             card::notice_text(ui, NoticeKind::Warning, e);
         }
         ui.add_space(12.0);
-        ui.columns(2, |cols| {
+        card::columns(ui, 2, |cols| {
             card::card(&mut cols[0], |ui| self.override_card_ui(ui, &snap));
             card::card(&mut cols[1], |ui| self.last_apply_card_ui(ui, &snap));
         });
@@ -2065,7 +2067,7 @@ impl AwaydSettingsApp {
             ui.label(egui::RichText::new(text).size(11.5).strong().color(color));
         };
         let mut go_to_mode = false;
-        ui.columns(3, |cols| {
+        card::columns(ui, 3, |cols| {
             caption(&mut cols[0], "CURRENT STATUS");
             let state = if snap.source == SOURCE_ERROR {
                 "Unknown"
@@ -2251,7 +2253,7 @@ impl AwaydSettingsApp {
     fn mode_choice_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let network = self.network_mode();
         let mut pick = None;
-        ui.columns(2, |cols| {
+        card::columns(ui, 2, |cols| {
             if card::choice_card(
                 &mut cols[0],
                 !network,
@@ -2479,17 +2481,30 @@ impl AwaydSettingsApp {
             "General",
             "Startup, display, logging and the configuration file.",
         );
-        ui.columns(2, |cols| {
-            card::card(&mut cols[0], |ui| self.autostart_ui(ui));
-            cols[0].add_space(12.0);
-            card::card(&mut cols[0], |ui| self.display_ui(ui));
-            cols[0].add_space(12.0);
-            card::card(&mut cols[0], |ui| self.about_ui(ui));
+        // Two columns only with room for them; narrower columns squeezed the descriptions.
+        if ui.available_width() >= GENERAL_TWO_COLUMNS_W {
+            card::columns(ui, 2, |cols| {
+                card::card(&mut cols[0], |ui| self.autostart_ui(ui));
+                cols[0].add_space(12.0);
+                card::card(&mut cols[0], |ui| self.display_ui(ui));
+                cols[0].add_space(12.0);
+                card::card(&mut cols[0], |ui| self.about_ui(ui));
 
-            card::card(&mut cols[1], |ui| self.advanced_ui(ui));
-            cols[1].add_space(12.0);
-            card::card(&mut cols[1], |ui| self.configuration_ui(ui));
-        });
+                card::card(&mut cols[1], |ui| self.advanced_ui(ui));
+                cols[1].add_space(12.0);
+                card::card(&mut cols[1], |ui| self.configuration_ui(ui));
+            });
+        } else {
+            card::card(ui, |ui| self.autostart_ui(ui));
+            ui.add_space(12.0);
+            card::card(ui, |ui| self.display_ui(ui));
+            ui.add_space(12.0);
+            card::card(ui, |ui| self.advanced_ui(ui));
+            ui.add_space(12.0);
+            card::card(ui, |ui| self.configuration_ui(ui));
+            ui.add_space(12.0);
+            card::card(ui, |ui| self.about_ui(ui));
+        }
     }
 
     /// Log and re-apply settings of `[advanced]`.
@@ -2571,12 +2586,15 @@ impl AwaydSettingsApp {
     fn configuration_ui(&mut self, ui: &mut egui::Ui) {
         card::card_title(ui, "Configuration");
         card::divider(ui);
-        ui.label("config.toml");
-        ui.label(
-            egui::RichText::new(paths::config_file().display().to_string())
-                .monospace()
-                .size(11.5),
-        );
+        let full = paths::config_file().display().to_string();
+        let short = if paths::is_portable() {
+            "config\\config.toml · next to awayd.exe"
+        } else {
+            "config.toml"
+        };
+        ui.label(egui::RichText::new(short).strong())
+            .on_hover_text(&full);
+        card::secondary_label(ui, &full).on_hover_text(&full);
         if paths::is_portable() {
             card::secondary_label(
                 ui,
@@ -2718,10 +2736,11 @@ impl AwaydSettingsApp {
                     let hint = Self::default_vacation_label(i);
                     let range_state = &mut self.vacation_ranges[i].range;
                     let vac = &mut self.config.schedule.vacations[i];
-                    let name_resp = ui.add(
-                        egui::TextEdit::singleline(&mut label)
-                            .hint_text(hint)
-                            .desired_width(160.0),
+                    // add_sized: in a grid the cell only offers last frame's column width,
+                    // which capped desired_width and kept the column at its minimum.
+                    let name_resp = ui.add_sized(
+                        [VACATION_NAME_W, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut label).hint_text(hint),
                     );
                     if name_resp.lost_focus() {
                         let resolved = Self::resolve_vacation_label(&label, i);
@@ -2764,10 +2783,10 @@ impl AwaydSettingsApp {
 
                 // Entry row for a new vacation: added as soon as both dates are set.
                 let draft_hint = Self::default_vacation_label(len);
-                let draft_name = ui.add(
+                let draft_name = ui.add_sized(
+                    [VACATION_NAME_W, ui.spacing().interact_size.y],
                     egui::TextEdit::singleline(&mut self.vac_draft_label)
-                        .hint_text(format!("New: {draft_hint}"))
-                        .desired_width(160.0),
+                        .hint_text(format!("New: {draft_hint}")),
                 );
                 if draft_name.lost_focus() && !self.vac_draft_label.trim().is_empty() {
                     changed = true;

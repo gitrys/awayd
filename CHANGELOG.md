@@ -51,8 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logs page: a table with time, level, source and message; separate filters for Verbose
   (DEBUG/TRACE, off by default), Info, Warnings and Errors; "Pop out" next to the title.
 
+- New app icon (light-blue tile with a half-filled circle, the mark of the settings sidebar)
+  for all three programs and the settings window's title bar and taskbar button; the tray
+  icons are unchanged.
+- Settings: the window cannot be made smaller than 896×640; the General page uses two
+  columns only when there is room; rows put wide controls (theme buttons, zoom slider) under
+  their text.
+
 ### Fixed
 
+- Settings: vacation names were cut to a few letters; texts in multi-column layouts no longer
+  have stretched word gaps; the config path is shown in normal text.
 - The settings window opened smaller by the zoom factor (e.g. 115 %) every time and moved
   right and down; size and position are now restored as they were left.
 - Logs: "Follow new lines" keeps the view at the newest line (it only jumped there once).

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- App mark (same geometry as crates/awayd-settings/src/app_icon.rs, which renders awayd.ico). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="awayd">
+  <title>awayd</title>
+  <rect x="0" y="0" width="64" height="64" rx="14.08" fill="#4CC2FF"/>
+  <circle cx="32" cy="32" r="18.56" fill="none" stroke="#0B0B0B" stroke-width="4.48"/>
+  <path d="M 32 13.44 A 18.56 18.56 0 0 1 32 50.56 Z" fill="#0B0B0B"/>
+</svg>

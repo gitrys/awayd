@@ -229,3 +229,17 @@ button are under **General**.
 - **Restart awayd:** run an older awayd.exe with the new settings → warning with "Restart
   awayd" → click → "awayd restarted" (note: it starts the awayd.exe next to the settings).
 - **Open log folder:** Logs → opens `state\logs` in Explorer.
+
+## 2026-11-23 – Plan UI-5 (layout fixes, minimum size, new icon)
+
+- **Vacations:** names are readable (160 px field), also for the new-vacation row.
+- **General:** Theme and Zoom show the text on one line and the buttons/slider below; no
+  text broken inside words; descriptions without stretched gaps; below about 960 px window
+  width the cards are in one column.
+- **Configuration:** "config\config.toml · next to awayd.exe" plus the full path in small
+  grey text (tooltip shows it too).
+- **Minimum size:** the window cannot be made smaller than 896×640; at that size every page
+  is usable (pages scroll).
+- **Icon:** title bar, taskbar button, Alt+Tab and Explorer show the new light-blue mark for
+  awayd-settings.exe, awayd.exe and awayctl.exe (Windows may keep the old icon cached until
+  the icon cache refreshes or the files are renamed/re-pinned).

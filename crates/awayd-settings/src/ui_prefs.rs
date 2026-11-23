@@ -8,9 +8,11 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_WIDTH: f32 = 960.0;
 const DEFAULT_HEIGHT: f32 = 680.0;
 const DEFAULT_ZOOM: f32 = 1.0;
-const MIN_WIDTH: f32 = 720.0;
+/// Smallest window (native points): sidebar plus one card column without squeezed text. The
+/// height stays well below laptop screens (768 px); taller pages scroll.
+pub const MIN_WIDTH: f32 = 896.0;
 const MAX_WIDTH: f32 = 1800.0;
-const MIN_HEIGHT: f32 = 480.0;
+pub const MIN_HEIGHT: f32 = 640.0;
 const MAX_HEIGHT: f32 = 1200.0;
 const MIN_ZOOM: f32 = 0.75;
 const MAX_ZOOM: f32 = 1.5;

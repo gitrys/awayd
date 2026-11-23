@@ -2,6 +2,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod app_icon;
 mod background;
 mod client;
 mod pages;
@@ -26,7 +27,8 @@ fn main() {
     // Sidebar plus a usable content column as minimum.
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([prefs.width, prefs.height])
-        .with_min_inner_size([640.0, 440.0]);
+        .with_min_inner_size([ui_prefs::MIN_WIDTH, ui_prefs::MIN_HEIGHT])
+        .with_icon(std::sync::Arc::new(app_icon::icon_data()));
     if let (Some(x), Some(y)) = (prefs.pos_x, prefs.pos_y) {
         viewport = viewport.with_position([x, y]);
     }
