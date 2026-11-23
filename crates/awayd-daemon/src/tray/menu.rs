@@ -1,197 +1,260 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
+//! Tray context menu and tooltip. The native Windows menu is built once; a status change
+//! only updates texts, and the warning line and "Clear override" are inserted or removed
+//! only when they appear or go away.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use awayd_core::status::{StatusSnapshot, SOURCE_ERROR};
 use awayd_ipc::SchedulerApi;
-use chrono::{DateTime, Local, NaiveDateTime, Timelike};
+use chrono::{DateTime, Local, NaiveDateTime};
 use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tokio::runtime::Handle;
 
 use crate::service::SchedulerService;
 
-pub const ID_VERSION: &str = "awayd.version";
-pub const ID_STATUS_MODE: &str = "awayd.status.mode";
-pub const ID_STATUS_NEXT: &str = "awayd.status.next";
-pub const ID_STATUS_APPLY: &str = "awayd.status.apply";
-pub const ID_APPLY: &str = "awayd.apply";
-pub const ID_OVR_INV: &str = "awayd.override.invisible";
-pub const ID_OVR_ON: &str = "awayd.override.online";
+pub const ID_STATUS: &str = "awayd.status";
+pub const ID_REASON: &str = "awayd.reason";
+pub const ID_WARNING: &str = "awayd.warning";
 pub const ID_OVR_CLR: &str = "awayd.override.clear";
+pub const ID_APPLY: &str = "awayd.apply";
 pub const ID_SETTINGS: &str = "awayd.settings";
 pub const ID_QUIT: &str = "awayd.quit";
+const ID_OVR_PREFIX: &str = "awayd.override.";
+
+/// Override durations (0 = until the next change), the same as on the Overview page.
+const DURATIONS: [(u32, &str); 5] = [
+    (0, "Until the next change"),
+    (30 * 60, "30 minutes"),
+    (60 * 60, "1 hour"),
+    (2 * 60 * 60, "2 hours"),
+    (4 * 60 * 60, "4 hours"),
+];
+
+/// Windows truncates tray tooltips at 127 characters.
+const TOOLTIP_MAX: usize = 120;
+const WARNING_MAX: usize = 60;
 
 pub struct TrayMenu {
     pub menu: Menu,
-    status_mode: MenuItem,
-    status_next: MenuItem,
-    status_apply: MenuItem,
+    status: MenuItem,
+    reason: MenuItem,
+    warning: MenuItem,
+    clear: MenuItem,
+    warning_shown: Cell<bool>,
+    clear_shown: Cell<bool>,
+    /// Settings page the warning line opens.
+    warning_page: Cell<&'static str>,
+}
+
+fn duration_submenu(title: &str, mode: &str) -> Submenu {
+    let sub = Submenu::new(title, true);
+    for (secs, label) in DURATIONS {
+        let id = format!("{ID_OVR_PREFIX}{mode}.{secs}");
+        let _ = sub.append(&MenuItem::with_id(id, label, true, None));
+    }
+    sub
 }
 
 impl TrayMenu {
     pub fn build() -> Self {
         let menu = Menu::new();
+        // Enabled so Windows draws it in the normal text colour (disabled items are grey);
+        // a click opens the Overview page.
+        let status = MenuItem::with_id(ID_STATUS, "awayd", true, None);
+        let reason = MenuItem::with_id(ID_REASON, "…", false, None);
+        let warning = MenuItem::with_id(ID_WARNING, "", true, None);
+        let clear = MenuItem::with_id(ID_OVR_CLR, "Clear override", true, None);
 
-        let version = MenuItem::with_id(ID_VERSION, version_line(), false, None);
-        let status_mode = MenuItem::with_id(ID_STATUS_MODE, "…", false, None);
-        let status_next = MenuItem::with_id(ID_STATUS_NEXT, "…", false, None);
-        let status_apply = MenuItem::with_id(ID_STATUS_APPLY, "…", false, None);
-
-        let ovr_inv = MenuItem::with_id(ID_OVR_INV, "Override: invisible", true, None);
-        let ovr_on = MenuItem::with_id(ID_OVR_ON, "Override: online", true, None);
-        let ovr_clr = MenuItem::with_id(ID_OVR_CLR, "Clear override", true, None);
-        let settings = MenuItem::with_id(ID_SETTINGS, "Settings…", true, None);
-        let apply = MenuItem::with_id(ID_APPLY, "Apply now", true, None);
-        let quit = MenuItem::with_id(ID_QUIT, "Quit", true, None);
-
-        let override_sub = Submenu::new("Override", true);
-        let _ = override_sub.append(&ovr_inv);
-        let _ = override_sub.append(&ovr_on);
-        let _ = override_sub.append(&ovr_clr);
-
-        let more_sub = Submenu::new("More…", true);
-        let _ = more_sub.append(&apply);
-
-        let _ = menu.append(&version);
+        let _ = menu.append(&status);
+        let _ = menu.append(&reason);
         let _ = menu.append(&PredefinedMenuItem::separator());
-        let _ = menu.append(&status_mode);
-        let _ = menu.append(&status_next);
-        let _ = menu.append(&status_apply);
+        let _ = menu.append(&duration_submenu("Invisible", "invisible"));
+        let _ = menu.append(&duration_submenu("Online", "online"));
         let _ = menu.append(&PredefinedMenuItem::separator());
-        let _ = menu.append(&override_sub);
+        let _ = menu.append(&MenuItem::with_id(ID_APPLY, "Apply now", true, None));
+        let _ = menu.append(&MenuItem::with_id(
+            ID_SETTINGS,
+            "Open settings…",
+            true,
+            None,
+        ));
         let _ = menu.append(&PredefinedMenuItem::separator());
-        let _ = menu.append(&settings);
-        let _ = menu.append(&PredefinedMenuItem::separator());
-        let _ = menu.append(&more_sub);
-        let _ = menu.append(&PredefinedMenuItem::separator());
-        let _ = menu.append(&quit);
+        let _ = menu.append(&MenuItem::with_id(ID_QUIT, "Quit", true, None));
 
         Self {
             menu,
-            status_mode,
-            status_next,
-            status_apply,
+            status,
+            reason,
+            warning,
+            clear,
+            warning_shown: Cell::new(false),
+            clear_shown: Cell::new(false),
+            warning_page: Cell::new("overview"),
         }
     }
 
-    pub fn refresh_status_lines(&self, s: &StatusSnapshot) {
-        let (mode, next, apply) = format_status_lines(s, Local::now());
-        self.status_mode.set_text(mode);
-        self.status_next.set_text(next);
-        self.status_apply.set_text(apply);
+    pub fn refresh(&self, s: &StatusSnapshot) {
+        let lines = MenuLines::for_status(s, Local::now());
+        self.status.set_text(&lines.status);
+        self.reason.set_text(&lines.reason);
+
+        // Order: status, reason, [warning], separator, Invisible ▸, Online ▸, [Clear override].
+        // "Clear override" is taken out first so the warning index below stays right.
+        if self.clear_shown.get() {
+            let _ = self.menu.remove(&self.clear);
+            self.clear_shown.set(false);
+        }
+        match (&lines.warning, self.warning_shown.get()) {
+            (Some((text, page)), shown) => {
+                self.warning.set_text(text);
+                self.warning_page.set(page);
+                if !shown {
+                    let _ = self.menu.insert(&self.warning, 2);
+                    self.warning_shown.set(true);
+                }
+            }
+            (None, true) => {
+                let _ = self.menu.remove(&self.warning);
+                self.warning_shown.set(false);
+            }
+            (None, false) => {}
+        }
+        if lines.override_active {
+            let at = if self.warning_shown.get() { 6 } else { 5 };
+            let _ = self.menu.insert(&self.clear, at);
+            self.clear_shown.set(true);
+        }
+    }
+
+    /// Settings page for a click on the warning line.
+    pub fn warning_page(&self) -> &'static str {
+        self.warning_page.get()
     }
 }
 
-/// First (disabled) tray menu line.
-pub fn version_line() -> String {
-    format!("awayd {}", awayd_core::VERSION)
+/// Texts of the dynamic menu lines.
+#[derive(Debug, PartialEq, Eq)]
+struct MenuLines {
+    status: String,
+    reason: String,
+    /// Text and settings page to open.
+    warning: Option<(String, &'static str)>,
+    override_active: bool,
 }
 
-/// Windows truncates tray tooltips at 127 characters.
-const TOOLTIP_MAX: usize = 120;
+impl MenuLines {
+    fn for_status(s: &StatusSnapshot, now: DateTime<Local>) -> Self {
+        let warning = s.errors.first().map(|e| {
+            (
+                format!("⚠ {}", truncate_chars(e, WARNING_MAX)),
+                page_for_warning(e),
+            )
+        });
+        if s.source == SOURCE_ERROR {
+            return Self {
+                status: "Status unknown".into(),
+                reason: "The last status could not be applied".into(),
+                warning,
+                override_active: false,
+            };
+        }
+        Self {
+            status: format!("{}{}", state_word(s), until_text(s, now)),
+            reason: reason_text(s).into(),
+            warning: if s.ok { None } else { warning },
+            override_active: s.source == "manual_override",
+        }
+    }
+}
 
-/// Tray tooltip: a failed tick says "error"; a tick with warnings keeps the mode and adds the
-/// first warning.
+fn state_word(s: &StatusSnapshot) -> &'static str {
+    if s.work_mode {
+        "Invisible"
+    } else {
+        "Online"
+    }
+}
+
+/// " · until 17:00" / " · until Tue 09:00"; empty in network mode without override (the
+/// next change depends on the device, not on a time).
+fn until_text(s: &StatusSnapshot, now: DateTime<Local>) -> String {
+    if s.mode_kind == "network" && s.source != "manual_override" {
+        return String::new();
+    }
+    let Some(at) = s
+        .next_wake
+        .as_deref()
+        .and_then(|w| NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M:%S").ok())
+    else {
+        return String::new();
+    };
+    if at.date() == now.date_naive() {
+        format!(" · until {}", at.format("%H:%M"))
+    } else {
+        format!(" · until {}", at.format("%a %H:%M"))
+    }
+}
+
+fn reason_text(s: &StatusSnapshot) -> &'static str {
+    match (s.source.as_str(), s.work_mode) {
+        ("manual_override", _) if s.mode_kind == "network" => {
+            "Override, then network presence again"
+        }
+        ("manual_override", _) => "Override, then work hours again",
+        ("network", true) => "The work device answers",
+        ("network", false) => "The work device does not answer",
+        (_, true) => "Work hours",
+        (_, false) => "Outside work hours, or a day off",
+    }
+}
+
+/// Short reason for the tooltip.
+fn reason_short(s: &StatusSnapshot) -> &'static str {
+    match (s.source.as_str(), s.work_mode) {
+        ("manual_override", _) => "override",
+        ("network", true) => "device present",
+        ("network", false) => "device absent",
+        (_, true) => "work hours",
+        (_, false) => "off hours",
+    }
+}
+
+/// Warnings about a service's token or connection open the Services page.
+fn page_for_warning(warning: &str) -> &'static str {
+    let w = warning.to_ascii_lowercase();
+    let about_service = awayd_core::backends::ALL
+        .iter()
+        .any(|b| w.contains(b.id) || w.contains(&b.display_name.to_ascii_lowercase()));
+    if about_service {
+        "services"
+    } else {
+        "overview"
+    }
+}
+
+/// "awayd · Invisible until 17:00 (work hours) · Discord token missing…".
 pub fn tooltip_text(s: &StatusSnapshot) -> String {
+    tooltip_at(s, Local::now())
+}
+
+fn tooltip_at(s: &StatusSnapshot, now: DateTime<Local>) -> String {
     let first = s.errors.first().map(String::as_str);
     let text = if s.source == SOURCE_ERROR {
-        format!("awayd — error: {}", first.unwrap_or("status not applied"))
+        format!(
+            "awayd · status unknown · {}",
+            first.unwrap_or("not applied")
+        )
     } else {
-        let mode = if s.work_mode { "work" } else { "off" };
+        let until = until_text(s, now).replace(" · ", " ");
+        let base = format!("awayd · {}{until} ({})", state_word(s), reason_short(s));
         match first {
-            Some(w) if !s.ok => format!("awayd — {mode} ({}) · warning: {w}", s.source),
-            _ => format!("awayd — {mode} ({})", s.source),
+            Some(w) if !s.ok => format!("{base} · {w}"),
+            _ => base,
         }
     };
     truncate_chars(&text, TOOLTIP_MAX)
-}
-
-pub fn format_status_lines(s: &StatusSnapshot, now: DateTime<Local>) -> (String, String, String) {
-    if s.source == SOURCE_ERROR {
-        return (
-            "Error: status not applied (see Logs)".to_string(),
-            format_next_line(s, now),
-            format_apply_line(s),
-        );
-    }
-    let mode_core = if s.work_mode {
-        "Invisible (work)"
-    } else {
-        "Online (off)"
-    };
-    let mode = if s.ok {
-        mode_core.to_string()
-    } else {
-        format!("! {mode_core}")
-    };
-
-    let next = format_next_line(s, now);
-    let apply = format_apply_line(s);
-
-    (mode, next, apply)
-}
-
-fn format_next_line(s: &StatusSnapshot, now: DateTime<Local>) -> String {
-    let Some(ref raw) = s.next_wake else {
-        return format!("Next: — · {}", s.source);
-    };
-
-    let Ok(naive) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S") else {
-        return format!("Next: {raw} · {}", s.source);
-    };
-
-    let wake = match naive.and_local_timezone(Local) {
-        chrono::LocalResult::Single(dt) | chrono::LocalResult::Ambiguous(dt, _) => dt,
-        chrono::LocalResult::None => return format!("Next: {raw} · {}", s.source),
-    };
-
-    if wake <= now {
-        return format!("Next: soon · {}", s.source);
-    }
-
-    let delta = wake - now;
-    let total_mins = delta.num_minutes();
-    if total_mins > 0 && total_mins <= 24 * 60 {
-        let hours = total_mins / 60;
-        let mins = total_mins % 60;
-        let rel = if hours > 0 {
-            format!("in {hours}h {mins}m")
-        } else {
-            format!("in {mins}m")
-        };
-        return format!("Next: {rel} · {}", s.source);
-    }
-
-    let time = format!("{:02}:{:02}", wake.hour(), wake.minute());
-    if wake.date_naive() == now.date_naive() {
-        format!("Next: {time} · {}", s.source)
-    } else {
-        format!("Next: {} {} · {}", wake.format("%m-%d"), time, s.source)
-    }
-}
-
-fn format_apply_line(s: &StatusSnapshot) -> String {
-    let mut line = match &s.last_apply {
-        Some(la) if la.ok => "Last apply: OK".to_string(),
-        Some(_) => "Last apply: failed".to_string(),
-        None => "Last apply: —".to_string(),
-    };
-
-    if let Some(la) = &s.last_apply {
-        if !la.ok {
-            if let Some(f) = la.first_failure() {
-                let msg = f.message.as_deref().unwrap_or("failed");
-                line.push_str(&format!(" — {}: {}", f.id, truncate_chars(msg, 28)));
-            }
-        }
-    }
-
-    if let Some(err) = s.errors.first() {
-        let truncated = truncate_chars(err, 40);
-        line.push_str(&format!(" — {truncated}"));
-    }
-
-    line
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -203,40 +266,87 @@ fn truncate_chars(s: &str, max: usize) -> String {
     out
 }
 
-pub fn handle_event(event: MenuEvent, service: Arc<SchedulerService>, rt: Handle) {
-    let id = event.id().0.clone();
-    rt.spawn(async move {
-        match id.as_str() {
-            ID_APPLY => {
-                let _ = SchedulerApi::apply_now(service.as_ref()).await;
-            }
-            ID_OVR_INV => {
-                let _ = SchedulerApi::set_override(service.as_ref(), "invisible", 0).await;
-            }
-            ID_OVR_ON => {
-                let _ = SchedulerApi::set_override(service.as_ref(), "online", 0).await;
-            }
-            ID_OVR_CLR => {
-                let _ = SchedulerApi::clear_override(service.as_ref()).await;
-            }
-            ID_SETTINGS => {
-                let _ = awayd_core::launch::spawn_settings();
-            }
-            ID_QUIT => {
-                SchedulerApi::quit(service.as_ref());
-                std::process::exit(0);
-            }
-            _ => {}
+/// What a menu click asks for.
+#[derive(Debug, PartialEq, Eq)]
+enum Action {
+    OpenSettings(&'static str),
+    OpenWarningPage,
+    Override(&'static str, u32),
+    ClearOverride,
+    ApplyNow,
+    Quit,
+    None,
+}
+
+fn action_for(id: &str) -> Action {
+    match id {
+        ID_STATUS => Action::OpenSettings("overview"),
+        ID_WARNING => Action::OpenWarningPage,
+        ID_SETTINGS => Action::OpenSettings("overview"),
+        ID_OVR_CLR => Action::ClearOverride,
+        ID_APPLY => Action::ApplyNow,
+        ID_QUIT => Action::Quit,
+        other => {
+            let Some(rest) = other.strip_prefix(ID_OVR_PREFIX) else {
+                return Action::None;
+            };
+            let Some((mode, secs)) = rest.split_once('.') else {
+                return Action::None;
+            };
+            let mode = match mode {
+                "invisible" => "invisible",
+                "online" => "online",
+                _ => return Action::None,
+            };
+            secs.parse()
+                .map_or(Action::None, |s| Action::Override(mode, s))
         }
-    });
+    }
+}
+
+/// Open the settings on `page`; a running settings window is brought to the front instead.
+pub fn open_settings(page: &str) {
+    if let Err(e) = awayd_core::launch::spawn_settings_page(page) {
+        tracing::warn!(target: "awayd::tray", "open settings: {e}");
+    }
+}
+
+pub fn handle_event(event: MenuEvent, menu: &TrayMenu, service: Arc<SchedulerService>, rt: Handle) {
+    match action_for(&event.id().0) {
+        Action::OpenSettings(page) => open_settings(page),
+        Action::OpenWarningPage => open_settings(menu.warning_page()),
+        Action::Override(mode, secs) => {
+            rt.spawn(async move {
+                let _ = SchedulerApi::set_override(service.as_ref(), mode, secs).await;
+            });
+        }
+        Action::ClearOverride => {
+            rt.spawn(async move {
+                let _ = SchedulerApi::clear_override(service.as_ref()).await;
+            });
+        }
+        Action::ApplyNow => {
+            rt.spawn(async move {
+                let _ = SchedulerApi::apply_now(service.as_ref()).await;
+            });
+        }
+        Action::Quit => {
+            SchedulerApi::quit(service.as_ref());
+            std::process::exit(0);
+        }
+        Action::None => {}
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use awayd_core::status::{
-        BackendApplyRecord, BackendApplyStatus, LastApplyRecord, STATUS_SCHEMA_VERSION,
-    };
+    use awayd_core::status::STATUS_SCHEMA_VERSION;
+    use chrono::TimeZone;
+
+    fn now() -> DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 11, 23, 13, 48, 0).unwrap()
+    }
 
     fn snap(work_mode: bool, source: &str, next_wake: Option<&str>) -> StatusSnapshot {
         StatusSnapshot {
@@ -246,112 +356,107 @@ mod tests {
             source: source.into(),
             mode_kind: "schedule".into(),
             next_wake: next_wake.map(str::to_string),
-            last_apply: Some(LastApplyRecord {
-                ok: true,
-                work_mode,
-                source: source.into(),
-                at: "2026-06-05T12:00:00".into(),
-                backends: vec![],
-            }),
-            errors: vec![],
-            version: String::new(),
+            ..StatusSnapshot::default()
         }
     }
 
     #[test]
-    fn format_mode_work_and_off() {
-        let now = Local::now();
-        let (mode, _, _) = format_status_lines(&snap(true, "schedule", None), now);
-        assert_eq!(mode, "Invisible (work)");
-        let (mode, _, _) = format_status_lines(&snap(false, "schedule", None), now);
-        assert_eq!(mode, "Online (off)");
-    }
+    fn status_and_reason_lines() {
+        let l = MenuLines::for_status(&snap(true, "schedule", Some("2026-11-23T17:00:00")), now());
+        assert_eq!(l.status, "Invisible · until 17:00");
+        assert_eq!(l.reason, "Work hours");
+        assert_eq!(l.warning, None);
+        assert!(!l.override_active);
 
-    #[test]
-    fn format_next_relative() {
-        let now = Local::now();
-        let wake = (now + chrono::Duration::minutes(90)).format("%Y-%m-%dT%H:%M:%S");
-        let (_, next, _) =
-            format_status_lines(&snap(false, "schedule", Some(&wake.to_string())), now);
-        assert!(next.starts_with("Next: in "));
-        assert!(next.contains('m'));
-        assert!(next.contains("schedule"));
-    }
+        let l = MenuLines::for_status(&snap(false, "schedule", Some("2026-11-24T09:00:00")), now());
+        assert_eq!(l.status, "Online · until Tue 09:00");
+        assert_eq!(l.reason, "Outside work hours, or a day off");
 
-    #[test]
-    fn version_line_shows_package_version() {
-        assert_eq!(
-            version_line(),
-            format!("awayd {}", env!("CARGO_PKG_VERSION"))
+        let l = MenuLines::for_status(
+            &snap(false, "manual_override", Some("2026-11-23T15:30:00")),
+            now(),
         );
-        assert!(version_line().starts_with("awayd 0."));
+        assert_eq!(l.status, "Online · until 15:30");
+        assert!(l.override_active);
     }
 
     #[test]
-    fn failed_tick_is_shown_as_error() {
-        let mut s = snap(false, SOURCE_ERROR, None);
-        s.ok = false;
-        s.last_apply = None;
-        s.errors = vec!["load config: parse config.toml".into()];
-        let (mode, _, _) = format_status_lines(&s, Local::now());
-        assert_eq!(mode, "Error: status not applied (see Logs)");
-        assert_eq!(
-            tooltip_text(&s),
-            "awayd — error: load config: parse config.toml"
-        );
+    fn network_mode_has_no_until() {
+        let mut s = snap(true, "network", Some("2026-11-23T14:00:00"));
+        s.mode_kind = "network".into();
+        let l = MenuLines::for_status(&s, now());
+        assert_eq!(l.status, "Invisible");
+        assert_eq!(l.reason, "The work device answers");
     }
 
     #[test]
-    fn warning_keeps_mode_in_tooltip() {
+    fn warning_line_and_page() {
         let mut s = snap(true, "schedule", None);
         s.ok = false;
-        s.errors = vec!["discord token missing (keyring or fallback file)".into()];
-        let (mode, _, _) = format_status_lines(&s, Local::now());
-        assert_eq!(mode, "! Invisible (work)");
+        s.errors = vec!["Discord token missing (Credential Manager or fallback file)".into()];
+        let l = MenuLines::for_status(&s, now());
+        let (text, page) = l.warning.unwrap();
+        assert!(text.starts_with("⚠ Discord token missing"), "{text}");
+        assert!(text.chars().count() <= WARNING_MAX + 2);
+        assert_eq!(page, "services");
+        assert_eq!(page_for_warning("holiday download failed"), "overview");
+    }
+
+    #[test]
+    fn failed_tick_is_shown_as_unknown() {
+        let mut s = snap(false, SOURCE_ERROR, None);
+        s.ok = false;
+        s.errors = vec!["load config: parse config.toml".into()];
+        let l = MenuLines::for_status(&s, now());
+        assert_eq!(l.status, "Status unknown");
         assert_eq!(
-            tooltip_text(&s),
-            "awayd — work (schedule) · warning: discord token missing (keyring or fallback file)"
-        );
-        assert_eq!(
-            tooltip_text(&snap(false, "manual_override", None)),
-            "awayd — off (manual_override)"
+            tooltip_at(&s, now()),
+            "awayd · status unknown · load config: parse config.toml"
         );
     }
 
     #[test]
-    fn tooltip_is_truncated() {
+    fn tooltips_in_plain_words() {
+        assert_eq!(
+            tooltip_at(&snap(true, "schedule", Some("2026-11-23T17:00:00")), now()),
+            "awayd · Invisible until 17:00 (work hours)"
+        );
+        let mut s = snap(true, "schedule", None);
+        s.ok = false;
+        s.errors = vec!["Discord token missing".into()];
+        assert_eq!(
+            tooltip_at(&s, now()),
+            "awayd · Invisible (work hours) · Discord token missing"
+        );
         let mut s = snap(false, SOURCE_ERROR, None);
         s.errors = vec!["x".repeat(300)];
-        let t = tooltip_text(&s);
+        let t = tooltip_at(&s, now());
         assert_eq!(t.chars().count(), TOOLTIP_MAX);
         assert!(t.ends_with('…'));
     }
 
     #[test]
-    fn format_apply_with_error() {
-        let mut s = snap(true, "schedule", None);
-        s.ok = false;
-        s.last_apply = Some(LastApplyRecord {
-            ok: false,
-            work_mode: true,
-            source: "schedule".into(),
-            at: "2026-06-05T12:00:00".into(),
-            backends: vec![
-                BackendApplyRecord {
-                    id: "steam".into(),
-                    status: BackendApplyStatus::Sent,
-                    message: None,
-                },
-                BackendApplyRecord {
-                    id: "discord".into(),
-                    status: BackendApplyStatus::Failed,
-                    message: Some("unauthorized".into()),
-                },
-            ],
-        });
-        s.errors = vec!["Discord token missing (Credential Manager or fallback file)".into()];
-        let (_, _, apply) = format_status_lines(&s, Local::now());
-        assert!(apply.contains("failed — discord: unauthorized"), "{apply}");
-        assert!(apply.contains("Discord token"));
+    fn menu_ids_map_to_actions() {
+        assert_eq!(action_for(ID_STATUS), Action::OpenSettings("overview"));
+        assert_eq!(
+            action_for("awayd.override.invisible.3600"),
+            Action::Override("invisible", 3600)
+        );
+        assert_eq!(
+            action_for("awayd.override.online.0"),
+            Action::Override("online", 0)
+        );
+        assert_eq!(action_for(ID_OVR_CLR), Action::ClearOverride);
+        assert_eq!(action_for("awayd.override.sideways.10"), Action::None);
+        assert_eq!(action_for("awayd.override.online.x"), Action::None);
+        // Every duration of both submenus maps to an override.
+        for (secs, _) in DURATIONS {
+            for mode in ["invisible", "online"] {
+                assert_eq!(
+                    action_for(&format!("{ID_OVR_PREFIX}{mode}.{secs}")),
+                    Action::Override(mode, secs)
+                );
+            }
+        }
     }
 }

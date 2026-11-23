@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- Symmetric 1+6+1+6+1 grid on 15x15; rasterized 2x to 30px tray. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 15 15" shape-rendering="crispEdges" role="img" aria-label="awayd online">
-  <title>awayd tray grid - online</title>
-  <path fill="white" fill-rule="evenodd" d="M0 0 H15 V15 H0 Z M1 1 H7 V7 H1 Z M8 1 H14 V7 H8 Z M1 8 H7 V14 H1 Z M8 8 H14 V14 H8 Z"/>
-  <rect x="8" y="1" width="6" height="6" fill="#50b450"/>
-</svg>

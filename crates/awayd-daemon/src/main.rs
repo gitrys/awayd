@@ -8,6 +8,14 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::System::Threading::WaitForSingleObject;
 
 fn main() {
+    // Per-monitor DPI aware: the tray icon is drawn at the real small-icon size and the
+    // context menu is not bitmap-scaled (blurry) at 125 % / 150 %.
+    // SAFETY: called once at start-up before any window exists.
+    unsafe {
+        let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
+    }
     let advanced = awayd_core::config::load_config(&awayd_core::config::paths::config_file())
         .map(|c| c.advanced)
         .unwrap_or_default();

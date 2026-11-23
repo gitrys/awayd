@@ -4,3 +4,4 @@ pub mod power;
 pub mod process;
 pub mod process_watch;
 pub mod steam;
+pub mod theme;

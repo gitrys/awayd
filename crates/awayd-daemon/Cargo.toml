@@ -43,6 +43,9 @@ windows = { workspace = true, features = [
     "Win32_System_Power",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_ProcessStatus",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_System_Registry",
     "Win32_System_SystemInformation",
     # IcmpSendEcho (network mode, probe = "ping")
     "Win32_NetworkManagement_IpHelper",

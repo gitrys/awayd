@@ -10,20 +10,21 @@ use awayd_core::status::StatusSnapshot;
 use tokio::sync::watch;
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconBuilder;
-use tray_icon::{MouseButtonState, TrayIconEvent};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, PostThreadMessageW, TranslateMessage, MSG, WM_APP,
 };
 
+use crate::platform::windows::theme;
 use crate::service::SchedulerService;
 
 /// Thread message to the tray thread: the status changed.
 const WM_APP_STATUS: u32 = WM_APP + 1;
 
 fn apply_status_ui(tray: &tray_icon::TrayIcon, tray_menu: &menu::TrayMenu, s: &StatusSnapshot) {
-    tray_menu.refresh_status_lines(s);
+    tray_menu.refresh(s);
     let _ = tray.set_tooltip(Some(&menu::tooltip_text(s)));
     let _ = tray.set_icon(Some(icon::icon_for_status(s)));
 }
@@ -33,13 +34,16 @@ pub fn run_tray(
     mut status_rx: watch::Receiver<String>,
     rt: tokio::runtime::Handle,
 ) -> anyhow::Result<()> {
+    // Before the first menu exists: context menus follow the dark Windows theme.
+    theme::allow_dark_menus();
     let tray_menu = menu::TrayMenu::build();
     let tray = TrayIconBuilder::new()
         .with_tooltip("awayd")
-        .with_icon(icon::icon_off())
+        .with_icon(icon::icon(icon::Glyph::ONLINE))
         .with_menu(Box::new(tray_menu.menu.clone()))
         .build()?;
-    tray.set_show_menu_on_left_click(true);
+    // Left click opens the settings, right click the menu (Windows convention).
+    tray.set_show_menu_on_left_click(false);
 
     let mut latest: Option<StatusSnapshot> = None;
 
@@ -58,6 +62,8 @@ pub fn run_tray(
     // menu open), so the status channel is also checked after every other message; a change
     // during an open menu is shown at the latest when the menu closes.
     let tray_thread = unsafe { GetCurrentThreadId() };
+    // The broadcast window forwards light/dark taskbar changes here.
+    theme::set_tray_thread(tray_thread);
     let mut wake_rx = status_rx.clone();
     rt.spawn(async move {
         loop {
@@ -84,6 +90,13 @@ pub fn run_tray(
                 DispatchMessageW(&msg);
             },
         }
+        // Taskbar theme changed: redraw the icon in the other colour (cached per theme).
+        if msg.message == theme::WM_APP_THEME {
+            let glyph = latest
+                .as_ref()
+                .map_or(icon::Glyph::ONLINE, icon::Glyph::for_status);
+            let _ = tray.set_icon(Some(icon::icon(glyph)));
+        }
 
         while status_rx
             .has_changed()
@@ -97,17 +110,26 @@ pub fn run_tray(
         }
         // Menu and tray events are queued while their window messages are dispatched.
         while let Ok(event) = MenuEvent::receiver().try_recv() {
-            menu::handle_event(event, service.clone(), rt.clone());
+            menu::handle_event(event, &tray_menu, service.clone(), rt.clone());
         }
         while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click {
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                if let Some(ref s) = latest {
-                    tray_menu.refresh_status_lines(s);
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => menu::open_settings("overview"),
+                // Refresh the relative times right before the menu shows.
+                TrayIconEvent::Click {
+                    button: MouseButton::Right,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    if let Some(ref s) = latest {
+                        tray_menu.refresh(s);
+                    }
                 }
+                _ => {}
             }
         }
     }

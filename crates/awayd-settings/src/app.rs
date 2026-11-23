@@ -122,6 +122,13 @@ impl Page {
         }
     }
 
+    /// Page for a `--page` argument.
+    fn from_arg(name: &str) -> Option<Page> {
+        Page::ALL
+            .into_iter()
+            .find(|p| p.label().replace(' ', "").eq_ignore_ascii_case(name))
+    }
+
     fn icon(self) -> NavIcon {
         match self {
             Page::Overview => NavIcon::Home,
@@ -472,7 +479,12 @@ enum ConfigErrorAction {
 }
 
 impl AwaydSettingsApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, ui_prefs: SettingsUiPrefs) -> Self {
+    /// `start_page`: from `--page` (overview, mode, daysoff, services, general, logs).
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        ui_prefs: SettingsUiPrefs,
+        start_page: Option<String>,
+    ) -> Self {
         theme::install(&cc.egui_ctx, ui_prefs.theme);
         let zoom = ui_prefs.zoom;
         cc.egui_ctx.set_zoom_factor(zoom);
@@ -526,7 +538,10 @@ impl AwaydSettingsApp {
             window_track_after: f64::MAX,
             tracked_geometry: None,
             tracked_geometry_since: 0.0,
-            active_page: Page::Overview,
+            active_page: start_page
+                .as_deref()
+                .and_then(Page::from_arg)
+                .unwrap_or(Page::Overview),
             log_view: None,
             log_popout_open: false,
             config_error: None,
@@ -3042,6 +3057,14 @@ mod tests {
     fn read_error_blocks_saving() {
         let r = resolve_loaded_config(true, Err("access denied".into()));
         assert_eq!(r.unwrap_err(), "access denied");
+    }
+
+    #[test]
+    fn page_names_from_the_command_line() {
+        assert_eq!(Page::from_arg("services"), Some(Page::Services));
+        assert_eq!(Page::from_arg("daysoff"), Some(Page::DaysOff));
+        assert_eq!(Page::from_arg("Overview"), Some(Page::Overview));
+        assert_eq!(Page::from_arg("nowhere"), None);
     }
 
     #[test]

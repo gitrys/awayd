@@ -9,8 +9,8 @@ use tracing::info;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-    TranslateMessage, HMENU, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_POWERBROADCAST, WM_TIMECHANGE,
-    WNDCLASSW,
+    TranslateMessage, HMENU, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_POWERBROADCAST,
+    WM_SETTINGCHANGE, WM_TIMECHANGE, WNDCLASSW,
 };
 
 /// Resume after a user action (input).
@@ -27,6 +27,16 @@ fn wake_reason(msg: u32, wparam: WPARAM) -> Option<&'static str> {
         WM_TIMECHANGE => Some("system time changed"),
         _ => None,
     }
+}
+
+/// `WM_SETTINGCHANGE` with the area "ImmersiveColorSet" (light/dark theme changed).
+fn is_color_set_change(lparam: LPARAM) -> bool {
+    if lparam.0 == 0 {
+        return false;
+    }
+    // SAFETY: for WM_SETTINGCHANGE a non-null lParam points to a NUL-terminated wide string.
+    let area = unsafe { windows::core::PCWSTR(lparam.0 as *const u16).to_string() };
+    area.is_ok_and(|a| a == "ImmersiveColorSet")
 }
 
 thread_local! {
@@ -90,6 +100,10 @@ unsafe extern "system" fn wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // Light/dark taskbar switched: the tray redraws its icon (no re-apply needed).
+    if msg == WM_SETTINGCHANGE && is_color_set_change(lparam) {
+        super::theme::notify_theme_changed();
+    }
     if let Some(reason) = wake_reason(msg, wparam) {
         info!(target: "awayd::power", reason, "{reason}");
         RESUME_TX.with(|cell| {

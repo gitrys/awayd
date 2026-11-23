@@ -256,3 +256,18 @@ button are under **General**.
 - **Resource use:** General shows memory and CPU time of awayd.exe, updated every 5 s while
   the page is open.
 - **Threads:** Task Manager → Details → awayd.exe → Threads column shows about 8 instead of 37.
+
+## 2026-11-23 – Plan Tray-1 (new tray icon and menu)
+
+- **Icon states:** online → empty ring; work hours → half-filled circle; override from the
+  menu → blue dot; Discord on without token → yellow triangle; broken `config.toml` →
+  dashed ring with triangle. Check at 100 % and, if possible, 150 % scaling: sharp edges.
+- **Light/dark:** Windows Settings → Personalization → Colors → "Choose your mode" =
+  Light → icon turns black at once; back to Dark → white.
+- **Menu (right click):** status line with "until …", reason below; warning line only with a
+  problem, its click opens Settings → Services; "Invisible ▸ 1 hour" sets an override (icon
+  dot, tooltip "until …"); "Clear override" appears only then; "Apply now", "Open
+  settings…", "Quit" work. The menu is dark in dark mode.
+- **Left click:** opens the settings on Overview; with the settings already open, a second
+  click brings the window to the front.
+- **Tooltip:** hover → "awayd · Invisible until 17:00 (work hours)" (plus the first warning).

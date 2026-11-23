@@ -61,6 +61,14 @@ pub fn spawn_settings() -> std::io::Result<Child> {
     std::process::Command::new(&path).spawn()
 }
 
+/// Start the settings on page `page` (`awayd-settings --page <page>`, e.g. "services").
+pub fn spawn_settings_page(page: &str) -> std::io::Result<Child> {
+    let path = resolve_awayd_binary(SETTINGS_BIN);
+    std::process::Command::new(&path)
+        .args(["--page", page])
+        .spawn()
+}
+
 fn is_executable(path: &Path) -> bool {
     path.is_file()
         && std::fs::metadata(path)

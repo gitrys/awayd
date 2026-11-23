@@ -32,7 +32,7 @@ cargo build --release
 
 1. Copy the portable folder anywhere (e.g. `F:\apps\awayd-portable\`).
 2. Run `awayd.exe` — tray icon appears.
-3. Open **Settings** from the tray menu (or run `awayd-settings.exe`).
+3. Click the tray icon to open **Settings** (or run `awayd-settings.exe`).
 4. Complete the wizard: services (Steam on, Discord off by default; the Discord token is only
    asked for when you switch Discord on), country/region, work hours. Change the services later
    in **Settings → Services** or in `config.toml` (`[backends.discord]`,

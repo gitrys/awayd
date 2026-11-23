@@ -65,6 +65,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   background runtime uses 2 worker threads instead of one per CPU core.
 - New setting `advanced.process_watch_seconds` (2–60 s, 0 = off; default 5), in the settings
   under **General → Advanced → Watch for program starts**.
+- New tray icon: a one-colour glyph (white on a dark, black on a light taskbar, following the
+  Windows setting at once) whose shape shows the state: empty ring = online, half-filled
+  circle = invisible, dashed ring = status unknown; a blue dot marks an override, a yellow
+  triangle a warning. Drawn at the real icon size for the screen scaling (awayd is now DPI
+  aware) and cached, so status changes cost no drawing. Replaces the 2×2 colour grid that
+  told the states apart by colour only.
+- New tray menu: the current status with "until …" and its reason at the top, a warning
+  line only when there is a problem (click opens the matching settings page), "Invisible ▸"
+  and "Online ▸" with the same durations as the Overview page, "Clear override" only while
+  one is active, "Apply now", "Open settings…", "Quit". The version line and "More…" are
+  gone. Menus are dark in Windows dark mode. Left click on the icon opens the settings, right
+  click the menu. The tooltip says the state in plain words ("awayd · Invisible until 17:00
+  (work hours)").
+- `awayd-settings --page <page>` opens a page directly; a second start brings the open
+  settings window to the front instead of doing nothing.
 - **General → Resource use** shows awayd's memory and CPU time since start (asked for only
   while the page is open; new named-pipe method `resource_use`).
 

@@ -39,12 +39,15 @@ owners and are used here only to describe what the program works with.
    [releases](https://github.com/gitrys/awayd/releases) (optionally [verify it](#verify-downloads))
    or build it yourself (see [Build](#build)), and extract it anywhere, for example
    `C:\Tools\awayd\`.
-2. Start `awayd.exe`. A tray icon appears.
+2. Start `awayd.exe`. A tray icon appears: an empty ring while you are online, a half-filled
+   circle while you are invisible, a blue dot for an override and a yellow triangle for a
+   warning. Left click opens the settings, right click the menu (override for a time, apply
+   now, quit).
 
    The executables are not code-signed yet, so Windows SmartScreen may show "Windows protected
    your PC" on the first start. Choose **More info → Run anyway** if you trust the download
    (verified checksum/signature).
-3. Open **Settings** from the tray menu (or run `awayd-settings.exe`) and complete the wizard:
+3. Click the tray icon to open **Settings** (or run `awayd-settings.exe`) and complete the wizard:
    services, country/region and work hours. The Discord token is only asked for when you switch
    Discord on (see the warning above).
 

@@ -1,117 +1,144 @@
 //! SPDX-License-Identifier: GPL-3.0-or-later
-//! Tray icons rasterized from `data/icons/*.svg` (embedded, overridable on disk).
+//! Tray icon: the app mark as a one-colour glyph whose shape carries the state (ring =
+//! online, half-filled = invisible, dashed = status unknown), with a small badge for an
+//! override (accent dot) or a warning (yellow triangle). White on a dark taskbar, black on a
+//! light one. Each combination is rasterized once per taskbar theme and icon size and cached,
+//! so a status change costs no drawing.
 
-use std::path::Path;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
-use awayd_core::config::paths;
 use awayd_core::status::{StatusSnapshot, SOURCE_ERROR};
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg;
 use tray_icon::Icon;
 
-const TRAY_SIZE: u32 = 30;
+/// What the icon shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Glyph {
+    /// Invisible (at work): right half filled.
+    pub half: bool,
+    /// Status unknown (failed tick): dashed ring.
+    pub dashed: bool,
+    pub override_dot: bool,
+    /// Warning or error; takes the badge place of the override dot.
+    pub warning: bool,
+}
 
-const SVG_ONLINE: &str = include_str!("../../../../data/icons/awayd-tray-grid.svg");
-const SVG_INVISIBLE: &str = include_str!("../../../../data/icons/awayd-tray-grid-invisible.svg");
-const SVG_OVERRIDE_ONLINE: &str =
-    include_str!("../../../../data/icons/awayd-tray-grid-override-online.svg");
-const SVG_OVERRIDE_INVISIBLE: &str =
-    include_str!("../../../../data/icons/awayd-tray-grid-override-invisible.svg");
-const SVG_ERROR: &str = include_str!("../../../../data/icons/awayd-tray-grid-error.svg");
+impl Glyph {
+    pub fn for_status(s: &StatusSnapshot) -> Self {
+        if s.source == SOURCE_ERROR {
+            return Self {
+                half: false,
+                dashed: true,
+                override_dot: false,
+                warning: true,
+            };
+        }
+        let warning = !s.ok;
+        Self {
+            half: s.work_mode,
+            dashed: false,
+            override_dot: s.source == "manual_override" && !warning,
+            warning,
+        }
+    }
 
-const ICON_FILES: [&str; 5] = [
-    "awayd-tray-grid.svg",
-    "awayd-tray-grid-invisible.svg",
-    "awayd-tray-grid-override-online.svg",
-    "awayd-tray-grid-override-invisible.svg",
-    "awayd-tray-grid-error.svg",
-];
+    pub const ONLINE: Glyph = Glyph {
+        half: false,
+        dashed: false,
+        override_dot: false,
+        warning: false,
+    };
+}
 
-const ICON_EMBED: [&str; 5] = [
-    SVG_ONLINE,
-    SVG_INVISIBLE,
-    SVG_OVERRIDE_ONLINE,
-    SVG_OVERRIDE_INVISIBLE,
-    SVG_ERROR,
-];
+struct Colors {
+    fg: &'static str,
+    accent: &'static str,
+}
 
-const ICON_ERROR: usize = 4;
+const ON_DARK: Colors = Colors {
+    fg: "#FFFFFF",
+    accent: "#4CC2FF",
+};
+const ON_LIGHT: Colors = Colors {
+    fg: "#1A1A1A",
+    accent: "#005FB8",
+};
 
-static RGBA_CACHE: OnceLock<[Vec<u8>; 5]> = OnceLock::new();
+/// The glyph as SVG (16 × 16 design grid). Badges are cut out of the glyph with a mask, so
+/// they stand free on any taskbar colour.
+fn svg(g: Glyph, light_taskbar: bool, size: u32) -> String {
+    let c = if light_taskbar { &ON_LIGHT } else { &ON_DARK };
+    let dash = if g.dashed {
+        r#" stroke-dasharray="2.3 1.6""#
+    } else {
+        ""
+    };
+    let half = if g.half {
+        format!(
+            r#"<path d="M8 2.4 A5.6 5.6 0 0 1 8 13.6 Z" fill="{}"/>"#,
+            c.fg
+        )
+    } else {
+        String::new()
+    };
+    let (cut, badge) = if g.warning {
+        (
+            r#"<path d="M12.5 7.2 L17.4 16.4 L7.6 16.4 Z" fill="black"/>"#.to_string(),
+            r##"<path d="M12.5 8.6 L16 15 L9 15 Z" fill="#FFB900"/><path d="M12.5 10.6 V12.6 M12.5 13.6 V13.7" stroke="#1A1A1A" stroke-width="1.2" stroke-linecap="round"/>"##.to_string(),
+        )
+    } else if g.override_dot {
+        (
+            r#"<circle cx="12.8" cy="12.8" r="3.4" fill="black"/>"#.to_string(),
+            format!(
+                r#"<circle cx="12.8" cy="12.8" r="2.4" fill="{}"/>"#,
+                c.accent
+            ),
+        )
+    } else {
+        (String::new(), String::new())
+    };
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 16 16"><defs><mask id="m"><rect width="16" height="16" fill="white"/>{cut}</mask></defs><g mask="url(#m)"><circle cx="8" cy="8" r="5.6" fill="none" stroke="{fg}" stroke-width="1.6"{dash}/>{half}</g>{badge}</svg>"#,
+        fg = c.fg
+    )
+}
 
-pub fn icon_off() -> Icon {
-    icon_from_index(0)
+type Key = (Glyph, bool, u32);
+static CACHE: OnceLock<Mutex<HashMap<Key, Vec<u8>>>> = OnceLock::new();
+
+/// Icon for `glyph` on the current taskbar at the system's small-icon size.
+pub fn icon(glyph: Glyph) -> Icon {
+    let light = crate::platform::windows::theme::taskbar_uses_light_theme();
+    let size = crate::platform::windows::theme::small_icon_size();
+    let key = (glyph, light, size);
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let rgba = {
+        let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry(key)
+            .or_insert_with(|| rasterize(&svg(glyph, light, size), size))
+            .clone()
+    };
+    Icon::from_rgba(rgba, size, size).expect("tray icon rgba")
 }
 
 pub fn icon_for_status(s: &StatusSnapshot) -> Icon {
-    icon_from_index(icon_index_for(s))
+    icon(Glyph::for_status(s))
 }
 
-/// Failed tick → error icon (it used to show the normal "online" icon); otherwise by
-/// mode and override. Warnings (`ok == false` after a successful tick) keep the mode icon.
-fn icon_index_for(s: &StatusSnapshot) -> usize {
-    if s.source == SOURCE_ERROR {
-        return ICON_ERROR;
-    }
-    icon_index(s.work_mode, s.source == "manual_override")
-}
-
-fn icon_index(work_mode: bool, override_active: bool) -> usize {
-    match (work_mode, override_active) {
-        (false, false) => 0,
-        (true, false) => 1,
-        (false, true) => 2,
-        (true, true) => 3,
-    }
-}
-
-fn icon_from_index(idx: usize) -> Icon {
-    let cache = RGBA_CACHE.get_or_init(init_rgba_cache);
-    let rgba = cache[idx].clone();
-    Icon::from_rgba(rgba, TRAY_SIZE, TRAY_SIZE).expect("tray icon rgba")
-}
-
-fn init_rgba_cache() -> [Vec<u8>; 5] {
-    std::array::from_fn(load_icon_rgba)
-}
-
-fn load_icon_rgba(index: usize) -> Vec<u8> {
-    let disk = paths::data_dir().join("icons").join(ICON_FILES[index]);
-    let svg = read_svg(&disk).unwrap_or_else(|| ICON_EMBED[index].to_string());
-    rasterize_svg(&svg).unwrap_or_else(|e| {
-        tracing::warn!(
-            target: "awayd::tray",
-            file = ICON_FILES[index],
-            "icon rasterize failed ({e}); using embedded fallback"
-        );
-        rasterize_svg(ICON_EMBED[index]).expect("embedded tray icon svg")
-    })
-}
-
-fn read_svg(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
-}
-
-fn rasterize_svg(svg: &str) -> Result<Vec<u8>, String> {
-    let opt = usvg::Options::default();
-    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| e.to_string())?;
-    let size = tree.size();
-    if size.width() <= 0.0 || size.height() <= 0.0 {
-        return Err("svg has zero size".into());
-    }
-    // SVG width/height should match TRAY_SIZE (viewBox 15 -> 30 via width="30").
-    let scale_x = TRAY_SIZE as f32 / size.width();
-    let scale_y = TRAY_SIZE as f32 / size.height();
-    let mut pixmap = Pixmap::new(TRAY_SIZE, TRAY_SIZE).ok_or("pixmap alloc")?;
+fn rasterize(svg: &str, size: u32) -> Vec<u8> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).expect("built-in tray svg");
+    let scale = size as f32 / tree.size().width();
+    let mut pixmap = Pixmap::new(size, size).expect("pixmap");
     resvg::render(
         &tree,
-        Transform::from_scale(scale_x, scale_y),
+        Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
     let mut rgba = pixmap.data().to_vec();
     unpremultiply_alpha(&mut rgba);
-    Ok(rgba)
+    rgba
 }
 
 fn unpremultiply_alpha(pixels: &mut [u8]) {
@@ -126,9 +153,9 @@ fn unpremultiply_alpha(pixels: &mut [u8]) {
         if a >= 0.999 {
             continue;
         }
-        px[0] = (px[0] as f32 / a).round() as u8;
-        px[1] = (px[1] as f32 / a).round() as u8;
-        px[2] = (px[2] as f32 / a).round() as u8;
+        px[0] = (px[0] as f32 / a).round().min(255.0) as u8;
+        px[1] = (px[1] as f32 / a).round().min(255.0) as u8;
+        px[2] = (px[2] as f32 / a).round().min(255.0) as u8;
     }
 }
 
@@ -136,44 +163,15 @@ fn unpremultiply_alpha(pixels: &mut [u8]) {
 mod tests {
     use super::*;
 
-    fn rgba_at(rgba: &[u8], x: u32, y: u32) -> [u8; 4] {
-        let idx = ((y * TRAY_SIZE + x) * 4) as usize;
-        [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
+    const S: u32 = 32;
+
+    fn px(rgba: &[u8], x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * S + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
     }
 
-    /// Center of top-right status cell (viewBox 15: cell 8,1 size 6 -> center 11,4).
-    const STATUS_X: u32 = 22;
-    const STATUS_Y: u32 = 8;
-    const OVERRIDE_X: u32 = 8;
-    const OVERRIDE_Y: u32 = 8;
-
-    #[test]
-    fn tray_is_2x_viewbox() {
-        assert_eq!(TRAY_SIZE, 30);
-    }
-
-    #[test]
-    fn embedded_svgs_rasterize_all_states() {
-        for (i, svg) in ICON_EMBED.iter().enumerate() {
-            rasterize_svg(svg).unwrap_or_else(|e| panic!("icon {i}: {e}"));
-        }
-    }
-
-    #[test]
-    fn status_cell_green_when_online() {
-        let off = rasterize_svg(SVG_ONLINE).expect("online svg");
-        let px = rgba_at(&off, STATUS_X, STATUS_Y);
-        assert!(
-            px[1] > px[0],
-            "expected green-ish at status cell, got {px:?}"
-        );
-    }
-
-    #[test]
-    fn status_cell_red_when_invisible() {
-        let work = rasterize_svg(SVG_INVISIBLE).expect("invisible svg");
-        let px = rgba_at(&work, STATUS_X, STATUS_Y);
-        assert!(px[0] > px[1], "expected red-ish at status cell, got {px:?}");
+    fn draw(g: Glyph, light: bool) -> Vec<u8> {
+        rasterize(&svg(g, light, S), S)
     }
 
     fn snapshot(ok: bool, work_mode: bool, source: &str) -> StatusSnapshot {
@@ -186,39 +184,91 @@ mod tests {
     }
 
     #[test]
-    fn failed_tick_uses_error_icon() {
+    fn state_mapping() {
         assert_eq!(
-            icon_index_for(&snapshot(false, false, SOURCE_ERROR)),
-            ICON_ERROR
+            Glyph::for_status(&snapshot(true, false, "schedule")),
+            Glyph::ONLINE
         );
+        let inv = Glyph::for_status(&snapshot(true, true, "schedule"));
+        assert!(inv.half && !inv.override_dot && !inv.warning);
+        let ovr = Glyph::for_status(&snapshot(true, false, "manual_override"));
+        assert!(ovr.override_dot && !ovr.half);
+        // A warning (e.g. no Discord token) keeps the state and shows the triangle.
+        let warn = Glyph::for_status(&snapshot(false, true, "schedule"));
+        assert!(warn.half && warn.warning);
+        let err = Glyph::for_status(&snapshot(false, false, SOURCE_ERROR));
+        assert!(err.dashed && err.warning);
     }
 
     #[test]
-    fn warning_keeps_mode_icon() {
-        // ok == false after a successful tick (e.g. no Discord token): still the mode icon.
-        assert_eq!(icon_index_for(&snapshot(false, false, "schedule")), 0);
-        assert_eq!(icon_index_for(&snapshot(false, true, "schedule")), 1);
-        assert_eq!(icon_index_for(&snapshot(true, true, "manual_override")), 3);
+    fn online_ring_is_hollow_invisible_is_half_filled() {
+        let online = draw(Glyph::ONLINE, false);
+        let inv = draw(
+            Glyph {
+                half: true,
+                ..Glyph::ONLINE
+            },
+            false,
+        );
+        // Centre right of the circle: empty for online, white for invisible.
+        assert_eq!(px(&online, 20, 16)[3], 0);
+        assert_eq!(px(&inv, 20, 16), [255, 255, 255, 255]);
+        // Centre left stays empty in both.
+        assert_eq!(px(&inv, 12, 16)[3], 0);
+        // Ring itself (left edge at x = 16 - 11.2).
+        assert!(px(&online, 5, 16)[3] > 200);
     }
 
     #[test]
-    fn error_icon_is_amber_in_all_cells() {
-        let err = rasterize_svg(SVG_ERROR).expect("error svg");
-        for (x, y) in [(STATUS_X, STATUS_Y), (OVERRIDE_X, OVERRIDE_Y)] {
-            let px = rgba_at(&err, x, y);
-            assert!(
-                px[0] > px[2] && px[1] > px[2] && px[0] > px[1],
-                "expected amber at ({x},{y}), got {px:?}"
-            );
+    fn light_taskbar_draws_dark() {
+        let g = draw(
+            Glyph {
+                half: true,
+                ..Glyph::ONLINE
+            },
+            true,
+        );
+        assert_eq!(px(&g, 20, 16), [0x1A, 0x1A, 0x1A, 255]);
+    }
+
+    #[test]
+    fn badges_have_their_colours() {
+        let ovr = draw(
+            Glyph {
+                override_dot: true,
+                ..Glyph::ONLINE
+            },
+            false,
+        );
+        assert_eq!(px(&ovr, 25, 25), [0x4C, 0xC2, 0xFF, 255]);
+        let warn = draw(
+            Glyph {
+                warning: true,
+                ..Glyph::ONLINE
+            },
+            false,
+        );
+        let p = px(&warn, 22, 28);
+        assert_eq!((p[0], p[1], p[3]), (0xFF, 0xB9, 255), "{p:?}");
+    }
+
+    #[test]
+    fn every_combination_rasterizes() {
+        for bits in 0..16u8 {
+            let g = Glyph {
+                half: bits & 1 != 0,
+                dashed: bits & 2 != 0,
+                override_dot: bits & 4 != 0,
+                warning: bits & 8 != 0,
+            };
+            for light in [false, true] {
+                for size in [16, 20, 24, 32] {
+                    assert_eq!(
+                        rasterize(&svg(g, light, size), size).len(),
+                        (size * size * 4) as usize
+                    );
+                }
+            }
         }
-    }
-
-    #[test]
-    fn override_fills_other_cells_blue() {
-        let ovr = rasterize_svg(SVG_OVERRIDE_INVISIBLE).expect("override svg");
-        let status = rgba_at(&ovr, STATUS_X, STATUS_Y);
-        let other = rgba_at(&ovr, OVERRIDE_X, OVERRIDE_Y);
-        assert!(status[0] > status[1], "status cell red, got {status:?}");
-        assert!(other[2] > other[0], "override cell blue, got {other:?}");
     }
 }
