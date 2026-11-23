@@ -13,25 +13,25 @@ use eframe::egui;
 use crate::background::Job;
 use crate::client::Ipc;
 use crate::pages::logs_page::{
-    log_popout_viewport_id, show_logs_docked_placeholder, show_logs_embedded_tab, show_logs_full,
-    LogViewState, LOG_POPOUT_DEFAULT_SIZE,
+    log_popout_viewport_id, show_logs_docked_placeholder, show_logs_full, LogViewState,
+    LOG_POPOUT_DEFAULT_SIZE,
 };
 use crate::theme::{self, ThemeChoice};
 use crate::ui_prefs::SettingsUiPrefs;
 use crate::widgets::card::{self, NoticeKind};
 use crate::widgets::date_range_picker::{show_date_range_field, DateRangeFieldState};
 use crate::widgets::holiday_list_flyout::{HolidayFlyoutAction, HolidayListFlyout};
-use crate::widgets::nav::nav_item;
+use crate::widgets::nav::{nav_item, NavIcon};
 use crate::widgets::searchable_picker::SearchablePicker;
-use crate::widgets::subdiv_labels::{format_subdiv_label, subdiv_options_for_country};
+use crate::widgets::subdiv_labels::subdiv_options_for_country;
 use crate::widgets::switch::switch;
 use crate::widgets::weekday_schedule_grid::{show_weekday_schedule_grid, WeekdayScheduleGridState};
 use crate::zoom_preview;
 use awayd_core::schedule::{normalize_schedule, schedule_days};
 
 const CREDENTIAL_STORED_PLACEHOLDER: &str = "••••••••••••";
-const SIDEBAR_WIDTH: f32 = 220.0;
-const STATUS_BAR_H: f32 = 28.0;
+const SIDEBAR_WIDTH: f32 = 200.0;
+const STATUS_BAR_H: f32 = 26.0;
 const TOAST_FADE_IN: f64 = 0.15;
 const TOAST_HOLD: f64 = 0.55;
 const TOAST_FADE_OUT: f64 = 0.25;
@@ -110,6 +110,16 @@ impl Page {
             Page::Services => "Services",
             Page::General => "General",
             Page::Logs => "Logs",
+        }
+    }
+
+    fn icon(self) -> NavIcon {
+        match self {
+            Page::Mode => NavIcon::Clock,
+            Page::DaysOff => NavIcon::Calendar,
+            Page::Services => NavIcon::Link,
+            Page::General => NavIcon::Sliders,
+            Page::Logs => NavIcon::List,
         }
     }
 }
@@ -231,6 +241,26 @@ fn dedupe_vacation_ids(entries: &mut [VacationEntry]) -> bool {
     changed
 }
 
+/// One line under the service name on the Services page.
+fn service_description(id: &str) -> &'static str {
+    match id {
+        backends::STEAM => {
+            "Switches your Steam friends status. No sign-in needed; works while the Steam \
+             client runs."
+        }
+        backends::DISCORD => "Switches your Discord status between invisible and online.",
+        _ => "",
+    }
+}
+
+/// Number of calendar days of a vacation (both ends included); `None` while a date is missing
+/// or the range is reversed.
+fn vacation_days(start: &str, end: &str) -> Option<i64> {
+    let s = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d").ok()?;
+    let e = NaiveDate::parse_from_str(end.trim(), "%Y-%m-%d").ok()?;
+    (e >= s).then(|| (e - s).num_days() + 1)
+}
+
 /// The daemon executable next to this settings binary (same lookup as `awayctl`).
 fn awayd_exe() -> std::path::PathBuf {
     awayd_core::launch::resolve_awayd_binary("awayd")
@@ -347,10 +377,9 @@ impl AwaydSettingsApp {
             .block_on(self.ipc.list_holidays(&country, &subdiv, year))
         {
             Ok(resp) => self.holiday_flyout.apply_response(&country, &subdiv, resp),
-            Err(e) => {
-                self.holiday_flyout.holidays.clear();
-                self.holiday_flyout.error = Some(e.to_string());
-            }
+            Err(e) => self
+                .holiday_flyout
+                .apply_error(&country, &subdiv, e.to_string()),
         }
     }
 
@@ -467,27 +496,21 @@ impl AwaydSettingsApp {
                             }
                         }
                         ui.end_row();
-
-                        ui.label("");
-                        let subdiv_label = format_subdiv_label(
-                            &self.config.schedule.country,
-                            &self.config.schedule.subdiv,
-                        );
-                        self.holiday_flyout.refreshing = self.refresh_job.is_some();
-                        let action = self.holiday_flyout.show(
-                            ui,
-                            button_w,
-                            &self.config.schedule.country,
-                            &self.config.schedule.subdiv,
-                            &subdiv_label,
-                            self.daemon_ok,
-                        );
-                        self.handle_holiday_flyout_action(action);
-                        ui.end_row();
                     });
             });
         });
         changed
+    }
+
+    /// Holidays of the selected region on the "Days off" page.
+    fn holiday_list(&mut self, ui: &mut egui::Ui) {
+        self.holiday_flyout.refreshing = self.refresh_job.is_some();
+        let country = self.config.schedule.country.clone();
+        let subdiv = self.config.schedule.subdiv.clone();
+        let action = self
+            .holiday_flyout
+            .show_inline(ui, &country, &subdiv, self.daemon_ok);
+        self.handle_holiday_flyout_action(action);
     }
 
     fn ease_smoothstep(t: f32) -> f32 {
@@ -615,19 +638,22 @@ impl AwaydSettingsApp {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mode = if paths::is_portable() {
-                    "portable mode"
+                let config = if paths::is_portable() {
+                    "config\\config.toml · portable mode".to_string()
                 } else {
-                    "installed"
+                    paths::config_file().display().to_string()
                 };
-                card::secondary_label(
-                    ui,
+                // The wizard has no sidebar with the daemon box.
+                let text = if self.wizard {
                     format!(
-                        "{} · {} · {mode}",
-                        daemon_status_label(self.daemon_ok, self.daemon_version.as_deref()),
-                        paths::config_file().display()
-                    ),
-                );
+                        "{} · {config}",
+                        daemon_status_label(self.daemon_ok, self.daemon_version.as_deref())
+                    )
+                } else {
+                    config
+                };
+                card::secondary_label(ui, text)
+                    .on_hover_text(paths::config_file().display().to_string());
             });
         });
     }
@@ -642,50 +668,58 @@ impl AwaydSettingsApp {
             .rounding(6.0)
             .inner_margin(egui::Margin::same(10.0))
             .show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                        if self.daemon_ok {
-                            ui.painter().circle_filled(rect.center(), 4.0, p.success_fg);
-                        } else {
-                            ui.painter().circle_stroke(
-                                rect.center(),
-                                3.5,
-                                egui::Stroke::new(1.5_f32, p.warn_fg),
-                            );
-                        }
-                        let text = if self.daemon_ok {
-                            "awayd is running"
-                        } else {
-                            "awayd is not running"
-                        };
-                        ui.label(egui::RichText::new(text).size(13.0).strong());
-                    });
-                    card::secondary_label(
-                        ui,
-                        daemon_status_label(self.daemon_ok, self.daemon_version.as_deref()),
-                    );
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                    if self.daemon_ok {
+                        ui.painter().circle_filled(rect.center(), 4.0, p.success_fg);
+                    } else {
+                        ui.painter().circle_stroke(
+                            rect.center(),
+                            3.5,
+                            egui::Stroke::new(1.5_f32, p.warn_fg),
+                        );
+                    }
+                    let text = if self.daemon_ok {
+                        "awayd is running"
+                    } else {
+                        "awayd is not running"
+                    };
+                    ui.label(egui::RichText::new(text).strong());
                 });
+                let detail = match (self.daemon_ok, self.daemon_version.as_deref()) {
+                    (false, _) => "Changes are saved and applied when it starts.".to_string(),
+                    (true, Some(v)) if v == awayd_core::VERSION => {
+                        format!("Daemon v{v} · same as this window")
+                    }
+                    _ => daemon_status_label(true, self.daemon_version.as_deref()),
+                };
+                card::secondary_label(ui, detail);
             });
     }
 
     fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new("awayd").size(17.0).strong());
-        card::secondary_label(ui, format!("Settings · v{}", awayd_core::VERSION));
-        ui.add_space(14.0);
+        // Own bottom area: the box keeps its natural height at the foot of the sidebar.
+        egui::TopBottomPanel::bottom("sidebar_foot")
+            .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(0.0, 4.0)))
+            .show_separator_line(false)
+            .show_inside(ui, |ui| self.daemon_box(ui));
+
+        ui.horizontal(|ui| {
+            crate::widgets::nav::app_tile(ui, 30.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("awayd").size(15.0).strong());
+                card::secondary_label(ui, format!("Settings · v{}", awayd_core::VERSION));
+            });
+        });
+        ui.add_space(12.0);
         for page in Page::ALL {
-            if nav_item(ui, page.label(), self.active_page == page).clicked() {
+            if nav_item(ui, page.icon(), page.label(), self.active_page == page).clicked() {
                 self.active_page = page;
             }
             ui.add_space(2.0);
         }
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            ui.add_space(4.0);
-            self.daemon_box(ui);
-        });
     }
 
     /// Version and config notices at the top of the content area.
@@ -800,13 +834,12 @@ impl AwaydSettingsApp {
 
     /// One card per service with its switch, risk note and, while switched on, its
     /// credential field. Returns true when a switch changed (the caller decides when to save).
-    fn services_ui(&mut self, ui: &mut egui::Ui, widget_id: &str, credential_hint: &str) -> bool {
+    fn services_ui(&mut self, ui: &mut egui::Ui, widget_id: &str) -> bool {
         let mut changed = false;
         for b in backends::ALL {
             let mut on = self.config.backend_enabled(b.id);
             card::card(ui, |ui| {
                 ui.horizontal(|ui| {
-                    card::card_title(ui, b.display_name);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if switch(ui, &mut on, b.display_name)
                             .on_hover_text(format!("Let awayd set your {} status", b.display_name))
@@ -815,6 +848,11 @@ impl AwaydSettingsApp {
                             self.config.set_backend_enabled(b.id, on);
                             changed = true;
                         }
+                        ui.add_space(12.0);
+                        ui.vertical(|ui| {
+                            card::card_title(ui, b.display_name);
+                            card::secondary_label(ui, service_description(b.id));
+                        });
                     });
                 });
                 if let Some(note) = b.risk_note {
@@ -822,12 +860,16 @@ impl AwaydSettingsApp {
                 }
                 if let (true, Some(label)) = (on, b.credential_label) {
                     card::divider(ui);
-                    ui.label(format!("{label} ({credential_hint}):"));
+                    ui.label(egui::RichText::new(label).strong());
                     if self.show_credential_field(ui, b.id, widget_id)
                         && self.credential_input_pending(b.id)
                     {
                         self.save_credential(b.id);
                     }
+                    card::secondary_label(
+                        ui,
+                        "Stored in the Windows Credential Manager, not in config.toml.",
+                    );
                 }
             });
             ui.add_space(12.0);
@@ -860,12 +902,14 @@ impl AwaydSettingsApp {
         }
     }
 
-    /// Persisted width/height are inner viewport size at 100% zoom (`inner * zoom`).
-    pub fn store_size_from_inner(inner_w: f32, inner_h: f32, zoom: f32) -> (f32, f32) {
+    /// Saved size and position are native window values (egui reports zoomed points:
+    /// native = points * zoom).
+    fn store_size_from_inner(inner_w: f32, inner_h: f32, zoom: f32) -> (f32, f32) {
         (inner_w * zoom, inner_h * zoom)
     }
 
-    pub fn inner_size_from_store(store_w: f32, store_h: f32, zoom: f32) -> (f32, f32) {
+    /// Zoomed points for egui viewport commands from saved native values.
+    fn inner_size_from_store(store_w: f32, store_h: f32, zoom: f32) -> (f32, f32) {
         (store_w / zoom, store_h / zoom)
     }
 
@@ -882,8 +926,10 @@ impl AwaydSettingsApp {
         };
         let (inner_w, inner_h) = (inner.width(), inner.height());
         let (store_w, store_h) = Self::store_size_from_inner(inner_w, inner_h, self.zoom_applied);
-        let pos_x = outer.min.x;
-        let pos_y = outer.min.y;
+        // Native position like the size: egui reports it in zoomed points, the window is
+        // created and placed in native points.
+        let (pos_x, pos_y) =
+            Self::store_size_from_inner(outer.min.x, outer.min.y, self.zoom_applied);
         let candidate = (store_w, store_h, pos_x, pos_y);
 
         match self.tracked_geometry {
@@ -959,18 +1005,23 @@ impl AwaydSettingsApp {
 
         if let (Some(px), Some(py)) = (self.ui_prefs.pos_x, self.ui_prefs.pos_y) {
             if let Some(outer) = outer {
-                let dx = (outer.min.x - px).abs();
-                let dy = (outer.min.y - py).abs();
+                let zoom = self.zoom_applied;
+                let (native_x, native_y) =
+                    Self::store_size_from_inner(outer.min.x, outer.min.y, zoom);
+                let dx = (native_x - px).abs();
+                let dy = (native_y - py).abs();
                 if dx > 1.0 || dy > 1.0 {
                     if self.startup_position_attempts < 3 {
+                        // The command takes zoomed points.
+                        let (x, y) = Self::inner_size_from_store(px, py, zoom);
                         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-                            px, py,
+                            x, y,
                         )));
                         self.startup_position_attempts += 1;
                         return;
                     }
-                    self.ui_prefs.pos_x = Some(outer.min.x);
-                    self.ui_prefs.pos_y = Some(outer.min.y);
+                    self.ui_prefs.pos_x = Some(native_x);
+                    self.ui_prefs.pos_y = Some(native_y);
                 }
             }
         }
@@ -1021,42 +1072,44 @@ impl AwaydSettingsApp {
             let ctx = ui.ctx().clone();
             self.set_theme_choice(&ctx, choice);
         }
-        card::divider(ui);
         if !self.zoom_dragging {
             self.zoom_pending = self.zoom_applied;
         }
-
-        ui.horizontal(|ui| {
-            let zoom_pct = (self.zoom_pending * 100.0).round() as i32;
-            ui.spacing_mut().slider_width = SETTINGS_SLIDER_WIDTH;
-            let slider = ui.add(
-                egui::Slider::new(&mut self.zoom_pending, 0.75..=1.5)
-                    .text(format!("Zoom {zoom_pct}%")),
-            );
-            let ctx = ui.ctx().clone();
-
-            if slider.drag_started() {
-                self.zoom_dragging = true;
-            }
-            if slider.drag_stopped() {
-                self.apply_zoom(self.zoom_pending, &ctx);
-                self.zoom_dragging = false;
-                self.flush_ui_prefs_save();
-            }
-
-            let at_default = (self.zoom_applied - 1.0).abs() < 0.001;
-            ui.add_enabled_ui(!at_default, |ui| {
-                if ui
-                    .button("Reset")
-                    .on_hover_text("Reset zoom to 100%")
-                    .clicked()
-                {
-                    self.apply_zoom(1.0, &ctx);
+        let zoom_pct = (self.zoom_pending * 100.0).round() as i32;
+        card::row(
+            ui,
+            &format!("Zoom {zoom_pct} %"),
+            Some("75 to 150 %. A text sample shows the size while you drag."),
+            |ui| {
+                let ctx = ui.ctx().clone();
+                // Right-to-left: Reset is rightmost, the slider left of it.
+                let at_default = (self.zoom_applied - 1.0).abs() < 0.001;
+                ui.add_enabled_ui(!at_default, |ui| {
+                    if ui
+                        .button("Reset")
+                        .on_hover_text("Reset zoom to 100%")
+                        .clicked()
+                    {
+                        self.apply_zoom(1.0, &ctx);
+                        self.zoom_dragging = false;
+                        self.flush_ui_prefs_save();
+                    }
+                });
+                ui.spacing_mut().slider_width = SETTINGS_SLIDER_WIDTH;
+                let slider =
+                    ui.add(egui::Slider::new(&mut self.zoom_pending, 0.75..=1.5).show_value(false));
+                let value = self.zoom_pending as f64;
+                slider.widget_info(|| egui::WidgetInfo::slider(true, value, "Zoom"));
+                if slider.drag_started() {
+                    self.zoom_dragging = true;
+                }
+                if slider.drag_stopped() {
+                    self.apply_zoom(self.zoom_pending, &ctx);
                     self.zoom_dragging = false;
                     self.flush_ui_prefs_save();
                 }
-            });
-        });
+            },
+        );
 
         if self.zoom_dragging {
             zoom_preview::show_typography_sample(ui, self.zoom_pending);
@@ -1385,11 +1438,24 @@ impl eframe::App for AwaydSettingsApp {
 
                 match self.active_page {
                     Page::Logs => {
-                        card::page_header(
-                            ui,
-                            "Logs",
-                            "Live view of awayd.log. Tokens are redacted before they are written.",
-                        );
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if !self.log_popout_open && ui.button("Pop out").clicked() {
+                                        self.log_popout_open = true;
+                                    }
+                                    ui.vertical(|ui| {
+                                        card::page_header(
+                                            ui,
+                                            "Logs",
+                                            "Live view of awayd.log. Tokens are redacted before \
+                                             they are written.",
+                                        );
+                                    });
+                                },
+                            );
+                        });
                         if self.log_popout_open {
                             let mut dock_logs = false;
                             show_logs_docked_placeholder(ui, &mut dock_logs);
@@ -1401,12 +1467,7 @@ impl eframe::App for AwaydSettingsApp {
                                 );
                             }
                         } else if let Some(log) = &mut self.log_view {
-                            show_logs_embedded_tab(
-                                ui,
-                                log,
-                                self.daemon_ok,
-                                &mut self.log_popout_open,
-                            );
+                            show_logs_full(ui, log, self.daemon_ok);
                         }
                     }
                     page => {
@@ -1474,11 +1535,7 @@ impl AwaydSettingsApp {
             }
             1 => {
                 // Switches are saved with the region/work hours steps and on "Finish".
-                self.services_ui(
-                    ui,
-                    "wiz_credential",
-                    "stored in Credential Manager, not config.toml",
-                );
+                self.services_ui(ui, "wiz_credential");
                 ui.horizontal(|ui| {
                     if ui.button("Back").clicked() {
                         self.wizard_step = 0;
@@ -1582,6 +1639,8 @@ impl AwaydSettingsApp {
         card::card(ui, |ui| {
             card::card_title(ui, "Public holidays");
             changed |= self.region_pickers(ui);
+            card::divider(ui);
+            self.holiday_list(ui);
         });
         ui.add_space(12.0);
         card::card(ui, |ui| {
@@ -1601,7 +1660,7 @@ impl AwaydSettingsApp {
             "Which statuses awayd changes. A switched-off service is never contacted and its \
              token is not read.",
         );
-        if self.services_ui(ui, "sched_credential", "leave empty to keep existing") {
+        if self.services_ui(ui, "sched_credential") {
             self.save_schedule_if_valid();
         }
     }
@@ -1656,72 +1715,105 @@ impl AwaydSettingsApp {
         let mut remove: Option<usize> = None;
         self.sync_vacation_range_states();
         let len = self.config.schedule.vacations.len();
-        for i in 0..len {
-            let id = self.config.schedule.vacations[i].id.clone();
-            let mut label = self.config.schedule.vacations[i].label.clone();
-            let hint = Self::default_vacation_label(i);
-            let range_state = &mut self.vacation_ranges[i].range;
-            let vac = &mut self.config.schedule.vacations[i];
-            ui.horizontal(|ui| {
-                let name_resp = ui.add(
-                    egui::TextEdit::singleline(&mut label)
-                        .hint_text(hint)
-                        .desired_width(140.0),
-                );
-                if name_resp.lost_focus() {
-                    let resolved = Self::resolve_vacation_label(&label, i);
-                    if resolved != vac.label {
-                        vac.label = resolved.clone();
-                        label = resolved;
+        let p = theme::palette(ui.ctx());
+        let header = |ui: &mut egui::Ui, text: &str| {
+            ui.label(egui::RichText::new(text).size(12.0).color(p.text_secondary));
+        };
+        // Fixed columns, so the buttons stay aligned whatever the length of the dates.
+        egui::Grid::new("vacations")
+            .num_columns(4)
+            .spacing([12.0, 6.0])
+            .min_col_width(40.0)
+            .show(ui, |ui| {
+                header(ui, "Name");
+                header(ui, "Dates");
+                header(ui, "Days");
+                ui.label("");
+                ui.end_row();
+
+                for i in 0..len {
+                    let id = self.config.schedule.vacations[i].id.clone();
+                    let mut label = self.config.schedule.vacations[i].label.clone();
+                    let hint = Self::default_vacation_label(i);
+                    let range_state = &mut self.vacation_ranges[i].range;
+                    let vac = &mut self.config.schedule.vacations[i];
+                    let name_resp = ui.add(
+                        egui::TextEdit::singleline(&mut label)
+                            .hint_text(hint)
+                            .desired_width(160.0),
+                    );
+                    if name_resp.lost_focus() {
+                        let resolved = Self::resolve_vacation_label(&label, i);
+                        if resolved != vac.label {
+                            vac.label = resolved.clone();
+                            label = resolved;
+                            changed = true;
+                        }
+                    }
+                    if show_date_range_field(
+                        ui,
+                        &format!("vac_{id}_range"),
+                        &mut vac.start,
+                        &mut vac.end,
+                        range_state,
+                    ) {
                         changed = true;
                     }
+                    let days = vacation_days(&vac.start, &vac.end)
+                        .map(|d| {
+                            if d == 1 {
+                                "1 day".to_string()
+                            } else {
+                                format!("{d} days")
+                            }
+                        })
+                        .unwrap_or_default();
+                    ui.label(egui::RichText::new(days).color(p.text_secondary));
+                    if crate::widgets::accessible_name(ui.button("🗑"), "Remove vacation")
+                        .on_hover_text("Remove vacation")
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                    ui.end_row();
+                    if !label.trim().is_empty() {
+                        self.config.schedule.vacations[i].label = label;
+                    }
+                }
+
+                // Entry row for a new vacation: added as soon as both dates are set.
+                let draft_hint = Self::default_vacation_label(len);
+                let draft_name = ui.add(
+                    egui::TextEdit::singleline(&mut self.vac_draft_label)
+                        .hint_text(format!("New: {draft_hint}"))
+                        .desired_width(160.0),
+                );
+                if draft_name.lost_focus() && !self.vac_draft_label.trim().is_empty() {
+                    changed = true;
                 }
                 if show_date_range_field(
                     ui,
-                    &format!("vac_{id}_range"),
-                    &mut vac.start,
-                    &mut vac.end,
-                    range_state,
+                    "vac_draft_range",
+                    &mut self.vac_draft_start,
+                    &mut self.vac_draft_end,
+                    &mut self.vac_draft_range_state,
                 ) {
                     changed = true;
                 }
-                if crate::widgets::accessible_name(ui.button("🗑"), "Remove vacation")
-                    .on_hover_text("Remove vacation")
-                    .clicked()
-                {
-                    remove = Some(i);
-                }
+                ui.label("");
+                ui.label("");
+                ui.end_row();
             });
-            if !label.trim().is_empty() {
-                self.config.schedule.vacations[i].label = label;
-            }
-        }
+        card::secondary_label(
+            ui,
+            "New vacation: optionally type a name in the last row, then pick the first and the \
+             last day with the calendar button. It is added and saved once both dates are set.",
+        );
         if let Some(i) = remove {
             self.config.schedule.vacations.remove(i);
             self.vacation_ranges.remove(i);
             changed = true;
         }
-
-        let draft_hint = Self::default_vacation_label(len);
-        ui.horizontal(|ui| {
-            let draft_name = ui.add(
-                egui::TextEdit::singleline(&mut self.vac_draft_label)
-                    .hint_text(draft_hint)
-                    .desired_width(140.0),
-            );
-            if draft_name.lost_focus() && !self.vac_draft_label.trim().is_empty() {
-                changed = true;
-            }
-            if show_date_range_field(
-                ui,
-                "vac_draft_range",
-                &mut self.vac_draft_start,
-                &mut self.vac_draft_end,
-                &mut self.vac_draft_range_state,
-            ) {
-                changed = true;
-            }
-        });
 
         if self.try_commit_vacation_draft() {
             changed = true;
@@ -1828,6 +1920,14 @@ mod tests {
     fn read_error_blocks_saving() {
         let r = resolve_loaded_config(true, Err("access denied".into()));
         assert_eq!(r.unwrap_err(), "access denied");
+    }
+
+    #[test]
+    fn vacation_days_count_both_ends() {
+        assert_eq!(vacation_days("2026-12-23", "2027-01-02"), Some(11));
+        assert_eq!(vacation_days("2026-12-31", "2026-12-31"), Some(1));
+        assert_eq!(vacation_days("2026-12-31", "2026-12-30"), None);
+        assert_eq!(vacation_days("", "2026-12-30"), None);
     }
 
     fn vac(id: &str) -> VacationEntry {

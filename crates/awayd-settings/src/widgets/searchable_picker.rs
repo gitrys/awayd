@@ -31,10 +31,7 @@ impl SearchablePicker {
         let button_text = truncate_label(raw, MAX_BUTTON_CHARS);
         let popup_id = ui.id().with(id_source).with("popup");
 
-        let response = ui.add_sized(
-            egui::vec2(width, ui.spacing().interact_size.y),
-            egui::Button::new(button_text),
-        );
+        let response = dropdown_button(ui, &button_text, width);
         if response.clicked() {
             if ui.memory(|m| m.is_popup_open(popup_id)) {
                 ui.memory_mut(|m| m.close_popup());
@@ -165,6 +162,41 @@ impl SearchablePicker {
         )
         .flatten()
     }
+}
+
+/// Field-like button: value left-aligned, a chevron on the right (Windows combo box look).
+fn dropdown_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
+    let height = ui.spacing().interact_size.y;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, text));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        let painter = ui.painter();
+        painter.rect(rect, visuals.rounding, visuals.bg_fill, visuals.bg_stroke);
+        if response.has_focus() {
+            painter.rect_stroke(rect, visuals.rounding, ui.visuals().selection.stroke);
+        }
+        let galley = egui::WidgetText::from(text).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            width - 36.0,
+            egui::TextStyle::Button,
+        );
+        let pos = egui::pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0);
+        painter.galley(pos, galley, visuals.text_color());
+        let c = egui::pos2(rect.right() - 14.0, rect.center().y);
+        let stroke = egui::Stroke::new(1.4_f32, visuals.text_color());
+        painter.line_segment(
+            [c + egui::vec2(-4.0, -2.0), c + egui::vec2(0.0, 2.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [c + egui::vec2(0.0, 2.0), c + egui::vec2(4.0, -2.0)],
+            stroke,
+        );
+    }
+    response
 }
 
 fn truncate_label(s: &str, max_chars: usize) -> String {

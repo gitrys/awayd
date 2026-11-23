@@ -162,3 +162,19 @@ button are under **General**.
   name and on/off.
 - **Font:** the text uses Segoe UI like the Windows settings; if it looks like egui's own
   font instead, the log has "Segoe UI not loaded" with the reason.
+
+## 2026-11-23 – Plan UI-1b (settings: fixes and mockup look)
+
+- **Window size and position:** set zoom to 115 %, make the window larger and move it, close
+  and reopen → same size and place (before: about 15 % smaller and further right each time).
+- **Scroll bar:** make the window short → a scroll bar is visible on the right without
+  hovering; all buttons reachable.
+- **Rows:** General → Theme and Startup: the description wraps, nothing overlaps.
+- **Sidebar:** icons next to the pages; the "awayd is running" box sits at the bottom in its
+  own height.
+- **Days off:** holidays of the year listed on the page, ◀/▶ changes the year; "Refresh
+  holiday data" works; vacations line up in columns with "N days"; adding one via the last
+  row (name, then calendar) still works; country/region open the search list.
+- **Logs:** the page opens at the newest line and follows new lines; scrolling up stops
+  following; "Verbose" off hides DEBUG lines (e.g. hyper_util), "Info" off hides INFO lines;
+  "Pop out" opens the separate window with the same table.

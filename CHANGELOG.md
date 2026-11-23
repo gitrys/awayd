@@ -22,6 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   days" are switches (the last one replaces the two opposite checkboxes "Use same hours…" and
   "Use custom table"). The result of the last action, the daemon state and the config file
   are shown in a status bar at the bottom. The default window size is 960×680.
+- Settings pages: the sidebar has icons; scroll bars are always visible; long descriptions
+  wrap instead of running under the controls; the public holidays of the selected year are
+  listed on the **Days off** page (with year navigation and "Refresh holiday data") instead of
+  a flyout; vacations are a table with the number of days; country and region look like
+  drop-down fields; each service has a short description.
+- Logs page: a table with time, level, source and message; separate filters for Verbose
+  (DEBUG/TRACE, off by default), Info, Warnings and Errors; "Pop out" next to the title.
+
+### Fixed
+
+- The settings window opened smaller by the zoom factor (e.g. 115 %) every time and moved
+  right and down; size and position are now restored as they were left.
+- Logs: "Follow new lines" keeps the view at the newest line (it only jumped there once).
 
 ## [0.2.0] - 2026-11-23
 

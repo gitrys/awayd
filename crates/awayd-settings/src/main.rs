@@ -20,11 +20,12 @@ fn main() {
         return;
     }
     let prefs = SettingsUiPrefs::load();
-    let (inner_w, inner_h) =
-        app::AwaydSettingsApp::inner_size_from_store(prefs.width, prefs.height, prefs.zoom);
-    // Sidebar plus a usable content column.
+    // The stored size is the window's native size. The window is created before the app sets
+    // its zoom (egui-winit uses the context's zoom, still 1.0, here), so it is used as is;
+    // dividing by the zoom made the window open that much too small every time.
+    // Sidebar plus a usable content column as minimum.
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([inner_w, inner_h])
+        .with_inner_size([prefs.width, prefs.height])
         .with_min_inner_size([640.0, 440.0]);
     if let (Some(x), Some(y)) = (prefs.pos_x, prefs.pos_y) {
         viewport = viewport.with_position([x, y]);

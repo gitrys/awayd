@@ -8,16 +8,16 @@ use crate::theme;
 
 /// Page title with a one-line description below it.
 pub fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-    ui.label(RichText::new(title).size(26.0));
+    ui.label(RichText::new(title).size(22.0));
     secondary_label(ui, subtitle);
-    ui.add_space(8.0);
+    ui.add_space(6.0);
 }
 
 /// Secondary (grey) text. Uses the palette colour, which is checked for contrast; egui's
 /// `weak()` blends towards the background and ends up too light on the cards.
 pub fn secondary_label(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
     let color = theme::palette(ui.ctx()).text_secondary;
-    ui.label(RichText::new(text).size(13.0).color(color))
+    ui.label(RichText::new(text).size(12.0).color(color))
 }
 
 /// A card spanning the available width.
@@ -27,7 +27,7 @@ pub fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
         .fill(p.card)
         .stroke(Stroke::new(1.0_f32, p.card_border))
         .rounding(8.0)
-        .inner_margin(egui::Margin::symmetric(20.0, 16.0))
+        .inner_margin(egui::Margin::symmetric(18.0, 14.0))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             add(ui)
@@ -37,7 +37,7 @@ pub fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
 
 /// Bold title at the top of a card.
 pub fn card_title(ui: &mut egui::Ui, title: &str) {
-    ui.label(RichText::new(title).size(15.0).strong());
+    ui.label(RichText::new(title).size(14.0).strong());
 }
 
 /// Thin line between the rows of a card.
@@ -60,14 +60,19 @@ pub fn row(
     control: impl FnOnce(&mut egui::Ui),
 ) {
     divider(ui);
+    // Control first (from the right), then the text in the space that is left, wrapped:
+    // laid out the other way round a long description ran under the control.
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.label(label);
-            if let Some(d) = description {
-                secondary_label(ui, d);
-            }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            control(ui);
+            ui.add_space(12.0);
+            ui.vertical(|ui| {
+                ui.label(label);
+                if let Some(d) = description {
+                    secondary_label(ui, d);
+                }
+            });
         });
-        ui.with_layout(Layout::right_to_left(Align::Center), control);
     });
 }
 

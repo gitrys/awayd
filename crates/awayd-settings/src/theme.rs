@@ -158,18 +158,21 @@ fn style(p: &Palette, dark: bool) -> egui::Style {
     let mut style = egui::Style::default();
 
     style.text_styles = [
-        (TextStyle::Heading, FontId::proportional(24.0)),
-        (TextStyle::Body, FontId::proportional(14.0)),
-        (TextStyle::Button, FontId::proportional(14.0)),
-        (TextStyle::Small, FontId::proportional(12.0)),
-        (TextStyle::Monospace, FontId::monospace(13.0)),
+        (TextStyle::Heading, FontId::proportional(20.0)),
+        (TextStyle::Body, FontId::proportional(13.0)),
+        (TextStyle::Button, FontId::proportional(13.0)),
+        (TextStyle::Small, FontId::proportional(11.5)),
+        (TextStyle::Monospace, FontId::monospace(12.0)),
     ]
     .into();
 
     let s = &mut style.spacing;
-    s.item_spacing = egui::vec2(8.0, 8.0);
-    s.button_padding = egui::vec2(12.0, 5.0);
-    s.interact_size = egui::vec2(40.0, 30.0);
+    s.item_spacing = egui::vec2(8.0, 6.0);
+    s.button_padding = egui::vec2(10.0, 4.0);
+    s.interact_size = egui::vec2(40.0, 28.0);
+    // Always-visible scroll bars: the floating default only appears on hover, so a page
+    // taller than the window looked cut off.
+    s.scroll = egui::style::ScrollStyle::solid();
     s.icon_width = 18.0;
     s.icon_width_inner = 10.0;
     s.icon_spacing = 8.0;
