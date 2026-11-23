@@ -194,6 +194,8 @@ pub struct AwaydSettingsApp {
     /// Holiday data state of the selected country (Overview), with the country it is for.
     holiday_status_job: Option<Job<(bool, i32, i32, String, String)>>,
     holiday_status: Option<(String, (bool, i32, i32, String, String))>,
+    /// "Start awayd" / "Restart awayd".
+    daemon_job: Option<Job<String>>,
     /// Override form on Overview.
     override_invisible: bool,
     override_ttl_secs: u32,
@@ -524,6 +526,7 @@ impl AwaydSettingsApp {
             status_polled_at: f64::NEG_INFINITY,
             holiday_status_job: None,
             holiday_status: None,
+            daemon_job: None,
             override_invisible: true,
             override_ttl_secs: 0,
         };
@@ -610,6 +613,15 @@ impl AwaydSettingsApp {
                     self.fetch_holiday_flyout();
                 }
                 Err(e) => self.set_status_error(format!("Refresh failed: {e}")),
+            }
+        }
+        if let Some(result) = self.daemon_job.as_ref().and_then(Job::poll) {
+            self.daemon_job = None;
+            self.reload();
+            self.refresh_status_soon();
+            match result {
+                Ok(msg) => self.set_status_success(msg),
+                Err(e) => self.set_status_error(format!("{e:#}")),
             }
         }
         if let Some(result) = self.status_job.as_ref().and_then(Job::poll) {
@@ -904,7 +916,7 @@ impl AwaydSettingsApp {
 
     /// Daemon state at the foot of the sidebar; the state is spelled out, the dot only
     /// repeats it.
-    fn daemon_box(&self, ui: &mut egui::Ui) {
+    fn daemon_box(&mut self, ui: &mut egui::Ui) {
         let p = theme::palette(ui.ctx());
         egui::Frame::none()
             .fill(p.card)
@@ -940,6 +952,25 @@ impl AwaydSettingsApp {
                     _ => daemon_status_label(true, self.daemon_version.as_deref()),
                 };
                 card::secondary_label(ui, detail);
+                if !self.daemon_ok {
+                    let starting = self.daemon_job.is_some();
+                    ui.horizontal(|ui| {
+                        let label = if starting {
+                            "Starting…"
+                        } else {
+                            "Start awayd"
+                        };
+                        if ui
+                            .add_enabled(!starting, egui::Button::new(label))
+                            .clicked()
+                        {
+                            self.start_or_restart_daemon(false);
+                        }
+                        if starting {
+                            ui.spinner();
+                        }
+                    });
+                }
             });
     }
 
@@ -969,7 +1000,20 @@ impl AwaydSettingsApp {
     /// Version and config notices at the top of the content area.
     fn banners_ui(&mut self, ui: &mut egui::Ui) {
         if let Some(hint) = version_mismatch_hint(self.daemon_version.as_deref()) {
-            card::notice_text(ui, NoticeKind::Warning, hint);
+            let mut restart = false;
+            let busy = self.daemon_job.is_some();
+            card::notice(ui, NoticeKind::Warning, |ui| {
+                ui.label(hint);
+                let label = if busy {
+                    "Restarting…"
+                } else {
+                    "Restart awayd"
+                };
+                restart = ui.add_enabled(!busy, egui::Button::new(label)).clicked();
+            });
+            if restart {
+                self.start_or_restart_daemon(true);
+            }
             ui.add_space(8.0);
         }
         if let Some(err) = self.config_error.clone() {
@@ -1106,15 +1150,30 @@ impl AwaydSettingsApp {
                 if let (true, Some(label)) = (on, b.credential_label) {
                     card::divider(ui);
                     ui.label(egui::RichText::new(label).strong());
-                    if self.show_credential_field(ui, b.id, widget_id)
-                        && self.credential_input_pending(b.id)
-                    {
-                        self.save_credential(b.id);
-                    }
-                    card::secondary_label(
-                        ui,
-                        "Stored in the Windows Credential Manager, not in config.toml.",
-                    );
+                    ui.horizontal(|ui| {
+                        if self.show_credential_field(ui, b.id, widget_id)
+                            && self.credential_input_pending(b.id)
+                        {
+                            self.save_credential(b.id);
+                        }
+                    });
+                    let stored = self.credentials.get(b.id).is_some_and(|f| f.stored);
+                    ui.horizontal(|ui| {
+                        card::secondary_label(
+                            ui,
+                            "Stored in the Windows Credential Manager, not in config.toml.",
+                        );
+                        if ui
+                            .add_enabled(
+                                stored && self.daemon_ok,
+                                egui::Button::new("Remove token"),
+                            )
+                            .on_hover_text("Delete the stored value from the Credential Manager")
+                            .clicked()
+                        {
+                            self.clear_credential(b.id);
+                        }
+                    });
                 }
                 if with_status {
                     if let Some(snap) = &self.status_snapshot {
@@ -1604,6 +1663,25 @@ impl AwaydSettingsApp {
         }
     }
 
+    fn clear_credential(&mut self, id: &'static str) {
+        let label = backends::find(id)
+            .and_then(|b| b.credential_label)
+            .unwrap_or("credential");
+        match self.rt.block_on(self.ipc.clear_credential(id)) {
+            Ok(true) => {
+                self.set_status_success(format!("{label} removed"));
+                if let Some(field) = self.credentials.get_mut(id) {
+                    field.input.clear();
+                    field.editing = false;
+                    field.stored = false;
+                }
+                self.refresh_status_soon();
+            }
+            Ok(false) => self.set_status_error(format!("{label} could not be removed")),
+            Err(e) => self.set_status_error(format!("{label} not removed: {e}")),
+        }
+    }
+
     fn save_credential(&mut self, id: &'static str) {
         let Some(value) = self
             .credentials
@@ -1698,6 +1776,9 @@ impl eframe::App for AwaydSettingsApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    if ui.button("Open log folder").clicked() {
+                                        self.open_folder(&paths::logs_dir());
+                                    }
                                     if !self.log_popout_open && ui.button("Pop out").clicked() {
                                         self.log_popout_open = true;
                                     }
@@ -2393,25 +2474,198 @@ impl AwaydSettingsApp {
     }
 
     fn general_page(&mut self, ui: &mut egui::Ui) {
-        card::page_header(ui, "General", "Startup, display and the setup wizard.");
-        card::card(ui, |ui| self.autostart_ui(ui));
-        ui.add_space(12.0);
-        card::card(ui, |ui| self.display_ui(ui));
-        ui.add_space(12.0);
-        card::card(ui, |ui| {
-            card::card_title(ui, "Setup");
-            card::row(
-                ui,
-                "Setup wizard",
-                Some("Services, mode, region and work hours step by step"),
-                |ui| {
-                    if ui.button("Run setup wizard again…").clicked() {
-                        self.wizard = true;
-                        self.wizard_step = 0;
-                    }
-                },
-            );
+        card::page_header(
+            ui,
+            "General",
+            "Startup, display, logging and the configuration file.",
+        );
+        ui.columns(2, |cols| {
+            card::card(&mut cols[0], |ui| self.autostart_ui(ui));
+            cols[0].add_space(12.0);
+            card::card(&mut cols[0], |ui| self.display_ui(ui));
+            cols[0].add_space(12.0);
+            card::card(&mut cols[0], |ui| self.about_ui(ui));
+
+            card::card(&mut cols[1], |ui| self.advanced_ui(ui));
+            cols[1].add_space(12.0);
+            card::card(&mut cols[1], |ui| self.configuration_ui(ui));
         });
+    }
+
+    /// Log and re-apply settings of `[advanced]`.
+    fn advanced_ui(&mut self, ui: &mut egui::Ui) {
+        const MIB: u64 = 1024 * 1024;
+        card::card_title(ui, "Advanced");
+        let mut save = false;
+        let adv = &mut self.config.advanced;
+        card::row(ui, "Log level", Some("Takes effect at once"), |ui| {
+            egui::ComboBox::from_id_salt("log_level")
+                .selected_text(adv.log_min_level.clone())
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for level in ["error", "warn", "info", "debug", "trace"] {
+                        if ui
+                            .selectable_label(adv.log_min_level == level, level)
+                            .clicked()
+                            && adv.log_min_level != level
+                        {
+                            adv.log_min_level = level.to_string();
+                            save = true;
+                        }
+                    }
+                });
+        });
+        // Shown in whole MB; only written back when this field was edited, so a size set by
+        // hand in config.toml (e.g. 5.5 MB) survives saving another setting.
+        let mut mb = (adv.log_max_bytes / MIB).max(1);
+        let mut size_edited = false;
+        card::row(
+            ui,
+            "Log file size before rotation",
+            Some("Takes effect when awayd restarts"),
+            |ui| {
+                let r = ui.add(egui::DragValue::new(&mut mb).range(1..=100).suffix(" MB"));
+                if r.drag_stopped() || r.lost_focus() {
+                    size_edited = true;
+                }
+            },
+        );
+        if size_edited && mb * MIB != adv.log_max_bytes {
+            adv.log_max_bytes = mb * MIB;
+            save = true;
+        }
+        card::row(
+            ui,
+            "Log files to keep",
+            Some("Takes effect when awayd restarts"),
+            |ui| {
+                let r = ui.add(egui::DragValue::new(&mut adv.log_max_files).range(1..=50));
+                if r.drag_stopped() || r.lost_focus() {
+                    save = true;
+                }
+            },
+        );
+        card::row(
+            ui,
+            "Wait before re-applying",
+            Some(
+                "After a program start or a change, so several events lead to one apply. Takes \
+                 effect when awayd restarts.",
+            ),
+            |ui| {
+                let r = ui.add(
+                    egui::DragValue::new(&mut adv.poke_debounce_ms)
+                        .range(1..=5000)
+                        .suffix(" ms"),
+                );
+                if r.drag_stopped() || r.lost_focus() {
+                    save = true;
+                }
+            },
+        );
+        if save {
+            self.save_mode_if_complete();
+        }
+    }
+
+    fn configuration_ui(&mut self, ui: &mut egui::Ui) {
+        card::card_title(ui, "Configuration");
+        card::divider(ui);
+        ui.label("config.toml");
+        ui.label(
+            egui::RichText::new(paths::config_file().display().to_string())
+                .monospace()
+                .size(11.5),
+        );
+        if paths::is_portable() {
+            card::secondary_label(
+                ui,
+                "Portable mode: settings, state and logs stay next to awayd.exe.",
+            );
+        }
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Open folder").clicked() {
+                self.open_folder(&paths::config_dir());
+            }
+            if ui
+                .button("Reload from file")
+                .on_hover_text("Read config.toml again, e.g. after editing it by hand")
+                .clicked()
+            {
+                self.reload();
+                if self.config_error.is_none() {
+                    self.set_status_success("config.toml reloaded");
+                }
+            }
+            if ui.button("Run setup wizard again…").clicked() {
+                self.wizard = true;
+                self.wizard_step = 0;
+            }
+        });
+    }
+
+    fn about_ui(&mut self, ui: &mut egui::Ui) {
+        card::card_title(ui, "About");
+        let running = self
+            .daemon_version
+            .as_deref()
+            .map(|v| format!("v{v}"))
+            .unwrap_or_else(|| "—".into());
+        let rows = [
+            ("Settings window", format!("v{}", awayd_core::VERSION)),
+            ("Running awayd.exe", running),
+            ("License", "GPL-3.0-or-later".into()),
+        ];
+        for (label, value) in rows {
+            card::row(ui, label, None, |ui| {
+                ui.label(value);
+            });
+        }
+        card::divider(ui);
+        ui.hyperlink_to("Project page", "https://github.com/gitrys/awayd");
+    }
+
+    fn open_folder(&mut self, dir: &std::path::Path) {
+        if let Err(e) = std::process::Command::new("explorer").arg(dir).spawn() {
+            self.set_status_error(format!("Could not open {}: {e}", dir.display()));
+        }
+    }
+
+    /// Start awayd.exe (when it is not running) or quit and start it again (other version).
+    /// Runs in the background; the settings reload when it is done.
+    fn start_or_restart_daemon(&mut self, restart: bool) {
+        if self.daemon_job.is_some() {
+            return;
+        }
+        let exe = awayd_exe();
+        self.daemon_job = Some(Job::spawn(&self.rt, &self.ctx, async move {
+            if restart {
+                Ipc::new().quit().await?;
+                // A new instance exits at once while the old one still holds the session.
+                for _ in 0..50 {
+                    if !Ipc::new().ping().await {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+            std::process::Command::new(&exe)
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("could not start {}: {e}", exe.display()))?;
+            // Give it time to open its named pipe.
+            for _ in 0..30 {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                if Ipc::new().ping().await {
+                    return Ok(if restart {
+                        "awayd restarted"
+                    } else {
+                        "awayd started"
+                    }
+                    .to_string());
+                }
+            }
+            Err(anyhow::anyhow!("awayd was started but does not answer yet"))
+        }));
     }
 
     fn try_commit_vacation_draft(&mut self) -> bool {

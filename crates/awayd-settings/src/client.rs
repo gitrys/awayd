@@ -51,6 +51,15 @@ impl Ipc {
         self.inner.refresh_holiday_data(country).await
     }
 
+    pub async fn clear_credential(&mut self, id: &str) -> Result<bool> {
+        self.inner.clear_credential(id).await
+    }
+
+    /// Ask the running awayd to quit (for "Restart awayd").
+    pub async fn quit(&mut self) -> Result<()> {
+        self.inner.quit().await
+    }
+
     pub async fn holiday_data_status(
         &mut self,
         country: &str,

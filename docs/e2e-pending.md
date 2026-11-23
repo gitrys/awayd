@@ -211,3 +211,21 @@ button are under **General**.
 - **Warnings:** with Discord on and no token the warning from the daemon is shown below the
   status card.
 - **Daemon offline:** quit awayd from the tray → Overview says awayd is not running.
+
+## 2026-11-23 – Plan UI-4 (token removal, advanced settings, about, start/restart)
+
+- **Remove token:** Services → Discord with a saved token → "Remove token" → status bar
+  "Discord token removed", the field is empty, `awayctl doctor` reports the token missing;
+  the button is disabled without a stored token.
+- **Advanced:** General → Log level "info" → DEBUG lines stop in the log at once; log size,
+  file count and "Wait before re-applying" are saved to `[advanced]` in `config.toml` (they
+  apply after restarting awayd); a hand-written `log_max_bytes` like 5767168 stays unless the
+  size field itself is changed.
+- **Configuration:** "Open folder" opens the config folder in Explorer; edit `config.toml` by
+  hand, "Reload from file" shows the change; "Run setup wizard again…" works.
+- **About:** both versions, license, "Project page" opens GitHub.
+- **Start awayd:** quit awayd from the tray → sidebar shows "Start awayd" → click → within a
+  few seconds "awayd started", the tray icon is back.
+- **Restart awayd:** run an older awayd.exe with the new settings → warning with "Restart
+  awayd" → click → "awayd restarted" (note: it starts the awayd.exe next to the settings).
+- **Open log folder:** Logs → opens `state\logs` in Explorer.

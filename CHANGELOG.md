@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the page is shown.
 - Services page: the last apply and the program whose start makes awayd apply again, per
   service.
+- Settings: **Remove token** deletes a stored Discord token from the Credential Manager.
+- General page: **Advanced** (log level, log file size and count, wait before re-applying;
+  until now only in `config.toml`), **Configuration** (path, "Open folder", "Reload from
+  file", setup wizard) and **About** (versions, license, project page).
+- "Start awayd" in the sidebar when awayd is not running, and "Restart awayd" in the notice
+  shown when the running awayd.exe is another version; "Open log folder" on the Logs page.
 
 ### Changed
 
