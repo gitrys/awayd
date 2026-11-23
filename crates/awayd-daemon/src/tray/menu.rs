@@ -32,8 +32,9 @@ const DURATIONS: [(u32, &str); 5] = [
     (4 * 60 * 60, "4 hours"),
 ];
 
-/// Windows truncates tray tooltips at 127 characters.
-const TOOLTIP_MAX: usize = 120;
+/// The Windows 11 taskbar cuts tray tooltips after 64 characters (observed; the API takes
+/// 128), so longer texts end with "…" here instead of in the middle of a word.
+const TOOLTIP_MAX: usize = 64;
 const WARNING_MAX: usize = 60;
 
 pub struct TrayMenu {
@@ -248,13 +249,20 @@ fn tooltip_at(s: &StatusSnapshot, now: DateTime<Local>) -> String {
         )
     } else {
         let until = until_text(s, now).replace(" · ", " ");
-        let base = format!("awayd · {}{until} ({})", state_word(s), reason_short(s));
         match first {
-            Some(w) if !s.ok => format!("{base} · {w}"),
-            _ => base,
+            // With a warning the reason gives way, and the warning loses its explanation in
+            // brackets: the space is short.
+            Some(w) if !s.ok => format!("awayd · {}{until} · ⚠ {}", state_word(s), warning_core(w)),
+            _ => format!("awayd · {}{until} ({})", state_word(s), reason_short(s)),
         }
     };
     truncate_chars(&text, TOOLTIP_MAX)
+}
+
+/// The part of a warning before its explanation in brackets ("Discord token missing
+/// (Credential Manager or fallback file)" → "Discord token missing").
+fn warning_core(w: &str) -> &str {
+    w.split(" (").next().unwrap_or(w).trim()
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -421,13 +429,19 @@ mod tests {
             tooltip_at(&snap(true, "schedule", Some("2026-11-23T17:00:00")), now()),
             "awayd · Invisible until 17:00 (work hours)"
         );
-        let mut s = snap(true, "schedule", None);
+        let mut s = snap(true, "schedule", Some("2026-11-23T16:25:00"));
         s.ok = false;
-        s.errors = vec!["Discord token missing".into()];
+        s.errors = vec!["Discord token missing (Credential Manager or fallback file)".into()];
         assert_eq!(
             tooltip_at(&s, now()),
-            "awayd · Invisible (work hours) · Discord token missing"
+            "awayd · Invisible until 16:25 · ⚠ Discord token missing"
         );
+        // Long states and warnings still stay within what the taskbar shows.
+        s.next_wake = Some("2026-11-24T09:00:00".into());
+        s.errors = vec!["x".repeat(200)];
+        let t = tooltip_at(&s, now());
+        assert_eq!(t.chars().count(), TOOLTIP_MAX);
+        assert!(t.ends_with('…'));
         let mut s = snap(false, SOURCE_ERROR, None);
         s.errors = vec!["x".repeat(300)];
         let t = tooltip_at(&s, now());
