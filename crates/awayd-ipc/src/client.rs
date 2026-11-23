@@ -188,6 +188,12 @@ impl SchedulerClient {
         serde_json::from_value(v).context("probe_host parse")
     }
 
+    /// Memory and CPU time of the daemon process.
+    pub async fn resource_use(&mut self) -> Result<ResourceUse> {
+        let v = self.call("resource_use", json!({})).await?;
+        serde_json::from_value(v).context("resource_use parse")
+    }
+
     pub async fn ping(&mut self) -> Result<bool> {
         match self.call("ping", json!({})).await {
             Ok(v) => Ok(v.as_bool().unwrap_or(true)),
@@ -211,6 +217,16 @@ impl HolidayRow {
     pub fn has_proper_name(&self) -> bool {
         self.local_name.is_some()
     }
+}
+
+/// Result of `resource_use`: what the daemon process uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceUse {
+    pub working_set_bytes: u64,
+    pub private_bytes: u64,
+    /// Kernel plus user CPU time since start.
+    pub cpu_ms: u64,
+    pub uptime_s: u64,
 }
 
 /// Result of `probe_host`.

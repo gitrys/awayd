@@ -218,6 +218,18 @@ pub struct AdvancedSection {
     pub log_max_files: usize,
     #[serde(default = "default_log_min_level")]
     pub log_min_level: String,
+    /// Seconds between two checks for newly started programs of switched-on services (e.g.
+    /// Steam, Discord); `0` turns the check off (the status is then applied only at
+    /// scheduled changes and on request).
+    #[serde(default = "default_process_watch_seconds")]
+    pub process_watch_seconds: u64,
+}
+
+/// Allowed `advanced.process_watch_seconds`: 0 (off) or this range.
+pub const PROCESS_WATCH_SECONDS_RANGE: std::ops::RangeInclusive<u64> = 2..=60;
+
+fn default_process_watch_seconds() -> u64 {
+    5
 }
 
 fn default_poke_ms() -> u64 {
@@ -255,6 +267,7 @@ impl Default for AppConfig {
                 log_max_bytes: default_log_max_bytes(),
                 log_max_files: default_log_max_files(),
                 log_min_level: default_log_min_level(),
+                process_watch_seconds: default_process_watch_seconds(),
             },
         }
     }
@@ -280,6 +293,7 @@ impl Default for AdvancedSection {
             log_max_bytes: default_log_max_bytes(),
             log_max_files: default_log_max_files(),
             log_min_level: default_log_min_level(),
+            process_watch_seconds: default_process_watch_seconds(),
         }
     }
 }

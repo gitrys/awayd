@@ -58,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   columns only when there is room; rows put wide controls (theme buttons, zoom slider) under
   their text.
 
+- Less load while idle: awayd notices program starts by comparing the list of process IDs
+  and reads the names of new processes only (a full process snapshot with all names took
+  about 7.6 ms per check, the list about 0.03 ms). The check runs every 5 s instead of 2 s,
+  only for programs of switched-on services, and rests completely when there are none. The
+  background runtime uses 2 worker threads instead of one per CPU core.
+- New setting `advanced.process_watch_seconds` (2–60 s, 0 = off; default 5), in the settings
+  under **General → Advanced → Watch for program starts**.
+- **General → Resource use** shows awayd's memory and CPU time since start (asked for only
+  while the page is open; new named-pipe method `resource_use`).
+
 ### Fixed
 
 - Settings: vacation names were cut to a few letters; texts in multi-column layouts no longer

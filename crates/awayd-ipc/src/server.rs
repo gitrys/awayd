@@ -36,6 +36,8 @@ pub trait SchedulerApi: Send + Sync {
     /// Check `host` once ("ping" or "tcp" with `port`) without changing the network-mode
     /// presence; returns a [`crate::client::ProbeHostResult`] as JSON.
     async fn probe_host(&self, host: &str, probe: &str, port: u16) -> Value;
+    /// Memory and CPU time of the daemon process as a [`crate::client::ResourceUse`].
+    async fn resource_use(&self) -> Value;
     fn quit(&self);
 }
 
@@ -226,6 +228,7 @@ async fn dispatch(api: &dyn SchedulerApi, req: &JsonRpcRequest) -> JsonRpcRespon
                 .probe_host(str_param(req, "host"), str_param(req, "probe"), port)
                 .await)
         }
+        "resource_use" => Ok(api.resource_use().await),
         "quit" => {
             api.quit();
             Ok(json!(true))
@@ -295,6 +298,9 @@ mod tests {
             unreachable!()
         }
         async fn probe_host(&self, _: &str, _: &str, _: u16) -> Value {
+            unreachable!()
+        }
+        async fn resource_use(&self) -> Value {
             unreachable!()
         }
         fn quit(&self) {}

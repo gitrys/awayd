@@ -243,3 +243,16 @@ button are under **General**.
 - **Icon:** title bar, taskbar button, Alt+Tab and Explorer show the new light-blue mark for
   awayd-settings.exe, awayd.exe and awayctl.exe (Windows may keep the old icon cached until
   the icon cache refreshes or the files are renamed/re-pinned).
+
+## 2026-11-23 – Plan Perf-1 (less idle load, resource use)
+
+- **Program starts still detected:** with Steam on, start Steam → within about 5 s (plus the
+  10 s coalescing) the log shows "steam.exe started" and the status is re-applied; same for
+  Discord when it is switched on.
+- **Rest:** switch off Steam and Discord (Services) → log "process watch settings" with
+  `names=[]`; Task Manager shows no CPU for awayd; switch one on again → watching resumes.
+- **Interval:** General → Advanced → "Watch for program starts" = Off → starts no longer
+  re-apply; "Every 2 s" → faster again; the value is saved as `process_watch_seconds`.
+- **Resource use:** General shows memory and CPU time of awayd.exe, updated every 5 s while
+  the page is open.
+- **Threads:** Task Manager → Details → awayd.exe → Threads column shows about 8 instead of 37.

@@ -51,6 +51,10 @@ impl Ipc {
         self.inner.refresh_holiday_data(country).await
     }
 
+    pub async fn resource_use(&mut self) -> Result<awayd_ipc::ResourceUse> {
+        self.inner.resource_use().await
+    }
+
     pub async fn clear_credential(&mut self, id: &str) -> Result<bool> {
         self.inner.clear_credential(id).await
     }

@@ -267,6 +267,22 @@ impl SchedulerApi for SchedulerService {
         .unwrap_or(serde_json::Value::Null)
     }
 
+    async fn resource_use(&self) -> serde_json::Value {
+        match crate::platform::windows::process::own_usage() {
+            Ok(u) => serde_json::to_value(awayd_ipc::ResourceUse {
+                working_set_bytes: u.working_set_bytes,
+                private_bytes: u.private_bytes,
+                cpu_ms: u.cpu_ms,
+                uptime_s: u.uptime_s,
+            })
+            .unwrap_or(serde_json::Value::Null),
+            Err(e) => {
+                tracing::warn!(target: "awayd::api", "ResourceUse: {e}");
+                serde_json::Value::Null
+            }
+        }
+    }
+
     async fn clear_override(&self) -> bool {
         if let Err(e) = update_state(&paths::state_file(), |st| st.r#override = None) {
             tracing::warn!(target: "awayd::api", "ClearOverride update state: {e:#}");

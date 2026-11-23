@@ -62,6 +62,19 @@ pub fn validate_app_config(app: &AppConfig) -> std::result::Result<(), String> {
     vacation_ranges_from_entries(&app.schedule.vacations)?;
     validate_backend_ids(app)?;
     validate_mode(&app.mode)?;
+    validate_advanced(&app.advanced)?;
+    Ok(())
+}
+
+fn validate_advanced(adv: &schema::AdvancedSection) -> std::result::Result<(), String> {
+    let s = adv.process_watch_seconds;
+    if s != 0 && !schema::PROCESS_WATCH_SECONDS_RANGE.contains(&s) {
+        return Err(format!(
+            "advanced.process_watch_seconds must be 0 (off) or {}..={} (got {s})",
+            schema::PROCESS_WATCH_SECONDS_RANGE.start(),
+            schema::PROCESS_WATCH_SECONDS_RANGE.end()
+        ));
+    }
     Ok(())
 }
 
@@ -284,6 +297,22 @@ mod tests {
         save_state(&path, &AppState::default()).unwrap();
         load_state(&path).unwrap();
         assert!(path.exists());
+    }
+
+    #[test]
+    fn process_watch_interval_is_validated() {
+        let mut c = AppConfig::default();
+        assert_eq!(c.advanced.process_watch_seconds, 5);
+        for ok in [0, 2, 10, 60] {
+            c.advanced.process_watch_seconds = ok;
+            assert!(validate_app_config(&c).is_ok(), "{ok}");
+        }
+        for bad in [1, 61] {
+            c.advanced.process_watch_seconds = bad;
+            assert!(validate_app_config(&c).is_err(), "{bad}");
+        }
+        let old: AppConfig = toml::from_str("schema_version = 1\n").unwrap();
+        assert_eq!(old.advanced.process_watch_seconds, 5);
     }
 
     #[test]

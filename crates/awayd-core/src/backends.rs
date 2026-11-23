@@ -58,9 +58,12 @@ pub fn needs_credential(id: &str) -> bool {
     find(id).is_some_and(|b| b.credential_label.is_some())
 }
 
-/// Process names of all backends, in table order (watched by the process watcher).
-pub fn all_process_names() -> Vec<&'static str> {
+/// Process names of the backends for which `enabled(id)` holds, in table order: what the
+/// process watcher looks for. Empty when no switched-on backend has a program to watch (the
+/// watcher then rests), whatever backends are added later.
+pub fn process_names_where(enabled: impl Fn(&str) -> bool) -> Vec<&'static str> {
     ALL.iter()
+        .filter(|b| enabled(b.id))
         .flat_map(|b| b.process_names.iter().copied())
         .collect()
 }
@@ -88,6 +91,11 @@ mod tests {
         assert!(needs_credential(DISCORD));
         assert!(!needs_credential(STEAM));
         assert!(!needs_credential("slack"));
-        assert_eq!(all_process_names(), vec!["Discord.exe", "steam.exe"]);
+        assert_eq!(
+            process_names_where(|_| true),
+            vec!["Discord.exe", "steam.exe"]
+        );
+        assert_eq!(process_names_where(|id| id == STEAM), vec!["steam.exe"]);
+        assert!(process_names_where(|_| false).is_empty());
     }
 }

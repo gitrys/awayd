@@ -8,7 +8,7 @@ use awayd_core::config::paths;
 use awayd_core::config::schema::{AppConfig, ProbeKind, VacationEntry, MIN_PROBE_INTERVAL_SECONDS};
 use awayd_core::status::SOURCE_ERROR;
 use awayd_core::StatusSnapshot;
-use awayd_ipc::ProbeHostResult;
+use awayd_ipc::{ProbeHostResult, ResourceUse};
 use chrono::{Datelike, NaiveDate};
 use eframe::egui;
 
@@ -200,6 +200,10 @@ pub struct AwaydSettingsApp {
     holiday_status: Option<(String, (bool, i32, i32, String, String))>,
     /// "Start awayd" / "Restart awayd".
     daemon_job: Option<Job<String>>,
+    /// "Resource use" on General, asked for only while that page is shown.
+    resource_job: Option<Job<ResourceUse>>,
+    resource_use: Option<ResourceUse>,
+    resource_polled_at: f64,
     /// Override form on Overview.
     override_invisible: bool,
     override_ttl_secs: u32,
@@ -207,6 +211,16 @@ pub struct AwaydSettingsApp {
 
 /// How often Overview and Services ask the daemon for its status while shown.
 const STATUS_POLL_SECS: f64 = 2.0;
+/// How often General asks the daemon for its memory and CPU time while shown.
+const RESOURCE_POLL_SECS: f64 = 5.0;
+
+/// Choices for `advanced.process_watch_seconds` (0 = off).
+const PROCESS_WATCH_CHOICES: [(u64, &str); 4] = [
+    (2, "Every 2 s"),
+    (5, "Every 5 s"),
+    (10, "Every 10 s"),
+    (0, "Off"),
+];
 
 /// Override durations offered on Overview (0 = until the next scheduled change).
 const OVERRIDE_DURATIONS: [(u32, &str); 6] = [
@@ -531,6 +545,9 @@ impl AwaydSettingsApp {
             holiday_status_job: None,
             holiday_status: None,
             daemon_job: None,
+            resource_job: None,
+            resource_use: None,
+            resource_polled_at: f64::NEG_INFINITY,
             override_invisible: true,
             override_ttl_secs: 0,
         };
@@ -628,6 +645,10 @@ impl AwaydSettingsApp {
                 Err(e) => self.set_status_error(format!("{e:#}")),
             }
         }
+        if let Some(result) = self.resource_job.as_ref().and_then(Job::poll) {
+            self.resource_job = None;
+            self.resource_use = result.ok();
+        }
         if let Some(result) = self.status_job.as_ref().and_then(Job::poll) {
             self.status_job = None;
             match result.and_then(|raw| {
@@ -657,6 +678,18 @@ impl AwaydSettingsApp {
     /// While Overview or Services is shown: ask for the daemon status every
     /// [`STATUS_POLL_SECS`], and for the holiday data state once per country.
     fn poll_status_if_shown(&mut self, ctx: &egui::Context) {
+        // "Resource use": every few seconds while General is shown, never otherwise.
+        if !self.wizard && self.active_page == Page::General && self.daemon_ok {
+            if self.resource_job.is_none()
+                && self.frame_time - self.resource_polled_at >= RESOURCE_POLL_SECS
+            {
+                self.resource_polled_at = self.frame_time;
+                self.resource_job = Some(Job::spawn(&self.rt, &self.ctx, async {
+                    Ipc::new().resource_use().await
+                }));
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(RESOURCE_POLL_SECS));
+        }
         let shown = !self.wizard && matches!(self.active_page, Page::Overview | Page::Services);
         if !shown || !self.daemon_ok {
             return;
@@ -2493,6 +2526,8 @@ impl AwaydSettingsApp {
                 card::card(&mut cols[1], |ui| self.advanced_ui(ui));
                 cols[1].add_space(12.0);
                 card::card(&mut cols[1], |ui| self.configuration_ui(ui));
+                cols[1].add_space(12.0);
+                card::card(&mut cols[1], |ui| self.resource_ui(ui));
             });
         } else {
             card::card(ui, |ui| self.autostart_ui(ui));
@@ -2502,6 +2537,8 @@ impl AwaydSettingsApp {
             card::card(ui, |ui| self.advanced_ui(ui));
             ui.add_space(12.0);
             card::card(ui, |ui| self.configuration_ui(ui));
+            ui.add_space(12.0);
+            card::card(ui, |ui| self.resource_ui(ui));
             ui.add_space(12.0);
             card::card(ui, |ui| self.about_ui(ui));
         }
@@ -2578,9 +2615,94 @@ impl AwaydSettingsApp {
                 }
             },
         );
+        // Programs of switched-on services, i.e. what the watcher looks for right now.
+        let watched = backends::process_names_where(|id| self.config.backend_enabled(id));
+        let watched_text = if watched.is_empty() {
+            "no switched-on service has a program to watch, so nothing is checked".to_string()
+        } else {
+            format!("now: {}", watched.join(", "))
+        };
+        let adv = &mut self.config.advanced;
+        let current = PROCESS_WATCH_CHOICES
+            .iter()
+            .find(|(s, _)| *s == adv.process_watch_seconds)
+            .map(|(_, l)| l.to_string())
+            .unwrap_or_else(|| format!("Every {} s", adv.process_watch_seconds));
+        card::row(
+            ui,
+            "Watch for program starts",
+            Some(&format!(
+                "Re-applies the status when the program of a switched-on service starts \
+                 ({watched_text}). Longer = less load, later reaction. Off: only at scheduled \
+                 changes and on \"Apply now\"."
+            )),
+            |ui| {
+                egui::ComboBox::from_id_salt("process_watch")
+                    .selected_text(current)
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        for (secs, label) in PROCESS_WATCH_CHOICES {
+                            if ui
+                                .selectable_label(adv.process_watch_seconds == secs, label)
+                                .clicked()
+                                && adv.process_watch_seconds != secs
+                            {
+                                adv.process_watch_seconds = secs;
+                                save = true;
+                            }
+                        }
+                    });
+            },
+        );
         if save {
             self.save_mode_if_complete();
         }
+    }
+
+    /// What awayd itself uses (from the daemon, refreshed while General is shown).
+    fn resource_ui(&mut self, ui: &mut egui::Ui) {
+        card::card_title(ui, "Resource use");
+        let Some(u) = self.resource_use else {
+            card::secondary_label(
+                ui,
+                if self.daemon_ok {
+                    "Asking awayd…"
+                } else {
+                    "awayd is not running."
+                },
+            );
+            return;
+        };
+        let mb = |b: u64| format!("{:.1} MB", b as f64 / (1024.0 * 1024.0));
+        card::row(ui, "awayd.exe memory", Some("Private · in RAM"), |ui| {
+            ui.label(format!(
+                "{} · {}",
+                mb(u.private_bytes),
+                mb(u.working_set_bytes)
+            ));
+        });
+        let share = if u.uptime_s > 0 {
+            u.cpu_ms as f64 / (u.uptime_s as f64 * 1000.0) * 100.0
+        } else {
+            0.0
+        };
+        card::row(
+            ui,
+            "CPU since start",
+            Some(&format!(
+                "Running for {}",
+                format_duration_short((u.uptime_s / 60).max(1) * 60)
+            )),
+            |ui| {
+                ui.label(format!(
+                    "{:.1} s · {share:.3} % of one core",
+                    u.cpu_ms as f64 / 1000.0
+                ));
+            },
+        );
+        card::row(ui, "Settings window", None, |ui| {
+            card::secondary_label(ui, "runs only while open");
+        });
     }
 
     fn configuration_ui(&mut self, ui: &mut egui::Ui) {

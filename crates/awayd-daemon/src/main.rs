@@ -49,7 +49,11 @@ fn main() {
     let backend = std::thread::Builder::new()
         .name("awayd-tokio".into())
         .spawn(move || {
+            // Two workers: awayd mostly sleeps, and blocking work (downloads, ping) runs on
+            // Tokio's blocking pool. The default (one worker per core) started 32 idle
+            // threads on a 32-thread CPU.
             let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
                 .enable_all()
                 .build()
                 .expect("tokio runtime");

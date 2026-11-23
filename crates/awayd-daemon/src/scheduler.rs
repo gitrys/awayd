@@ -345,6 +345,8 @@ async fn run_one_tick(
 
     let tick: anyhow::Result<Duration> = async {
         let app = config::load_config(cfg_path).context("load config")?;
+        // Switched services or a changed interval take effect for the watcher at once.
+        crate::platform::windows::process_watch::configure(&app);
         let backends = load_backends(&app, &mut errors).await?;
         let work = build_config(&app).map_err(|e| anyhow::anyhow!(e))?;
         let raw = toml::to_string_pretty(&app).context("serialize config")?;
