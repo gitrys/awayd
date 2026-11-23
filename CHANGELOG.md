@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Settings: the country picker under **Days off** offered only Germany. At start the settings
+  ask awayd for the country list and for the stored credentials at the same moment; the second
+  connection was refused with "All pipe instances are busy". Clients (settings and `awayctl`)
+  now retry a busy pipe for up to 2 s, and the settings ask for the country list again every
+  30 s while the picker is shown without it. The same race could make **Services** show a stored
+  Discord token as missing.
+- awayd logs a warning when it cannot download the country list instead of silently answering
+  with an empty list.
+
 ## [0.3.0] - 2026-11-23
 
 ### Upgrading from 0.2.0

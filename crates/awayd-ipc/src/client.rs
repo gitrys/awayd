@@ -6,10 +6,34 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::windows::named_pipe::ClientOptions;
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio::time::timeout;
 
 use crate::protocol::{decode_line, encode_line, pipe_name, JsonRpcRequest, JsonRpcResponse};
+
+/// `ERROR_PIPE_BUSY`: the daemon's one waiting pipe instance was just taken by another client
+/// and the next one is not created yet.
+const ERROR_PIPE_BUSY: i32 = 231;
+/// How long a client keeps retrying a busy pipe before giving up.
+const PIPE_BUSY_WAIT: Duration = Duration::from_secs(2);
+const PIPE_BUSY_RETRY: Duration = Duration::from_millis(20);
+
+/// Open the pipe `name`; while it is busy (two clients connecting at the same moment), retry
+/// for up to `wait`. Any other error (e.g. the daemon is not running) is returned at once.
+async fn open_pipe(name: &str, wait: Duration) -> std::io::Result<NamedPipeClient> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        match ClientOptions::new().open(name) {
+            Err(e)
+                if e.raw_os_error() == Some(ERROR_PIPE_BUSY)
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(PIPE_BUSY_RETRY).await;
+            }
+            other => return other,
+        }
+    }
+}
 
 pub struct SchedulerClient {
     next_id: u64,
@@ -38,7 +62,7 @@ impl SchedulerClient {
     }
 
     async fn roundtrip(&self, req: &JsonRpcRequest) -> Result<JsonRpcResponse> {
-        let client = ClientOptions::new().open(pipe_name())?;
+        let client = open_pipe(&pipe_name(), PIPE_BUSY_WAIT).await?;
         timeout(Duration::from_secs(30), async {
             let (reader, mut writer) = tokio::io::split(client);
             writer.write_all(&encode_line(req)?).await?;
@@ -247,4 +271,49 @@ pub struct ListHolidaysResponse {
     pub year_max: i32,
     pub holidays: Vec<HolidayRow>,
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    fn test_pipe(tag: &str) -> String {
+        format!(r"\\.\pipe\awayd-test-{}-{tag}", std::process::id())
+    }
+
+    #[tokio::test]
+    async fn busy_pipe_is_retried_until_a_new_instance_exists() {
+        let name = test_pipe("busy");
+        let first = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .unwrap();
+        // Another client holds the only instance, as the UI thread does while the settings'
+        // background request connects.
+        let _taken = ClientOptions::new().open(&name).unwrap();
+        let err = open_pipe(&name, Duration::ZERO).await.unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(ERROR_PIPE_BUSY));
+
+        let later_name = name.clone();
+        let later = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            ServerOptions::new().create(&later_name).unwrap()
+        });
+        let client = open_pipe(&name, Duration::from_secs(2)).await;
+        assert!(client.is_ok(), "{:?}", client.err());
+        drop(later.await.unwrap());
+        drop(first);
+    }
+
+    #[tokio::test]
+    async fn missing_pipe_fails_at_once() {
+        let started = std::time::Instant::now();
+        let err = open_pipe(&test_pipe("missing"), Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        // ERROR_FILE_NOT_FOUND: no daemon, no waiting.
+        assert_eq!(err.raw_os_error(), Some(2));
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
 }

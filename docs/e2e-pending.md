@@ -2,6 +2,16 @@
 
 Flows to cover in the next requested E2E run. Remove entries once they have been run.
 
+## 2026-11-23 – Busy pipe (country list)
+
+- **Country picker:** open `awayd-settings` with awayd running → **Days off → Country** lists all
+  countries (not only Germany); **Services** shows the stored Discord token as stored.
+- **Country list retry:** start the settings with the network off (awayd has no cached list) →
+  picker shows only Germany, awayd log has `ListAvailableCountries: …`; turn the network on and
+  stay on **Days off** → within about 30 s the full list appears.
+- **awayd not running:** `awayctl doctor` and the settings report "not running" at once (no 2 s
+  delay).
+
 ## 2026-11-22 – Fix plan 1
 
 - **Discord start re-apply (#76), open question:** with a Discord token stored, does Discord

@@ -190,6 +190,9 @@ pub struct AwaydSettingsApp {
     ctx: egui::Context,
     /// Country list from the daemon (may download it first, up to 30 s).
     countries_job: Option<Job<Vec<(String, String)>>>,
+    /// `countries` holds the daemon's list, not just the built-in fallback.
+    countries_loaded: bool,
+    countries_requested_at: f64,
     /// "Refresh holiday data" (downloads several years; can take minutes).
     refresh_job: Option<Job<String>>,
     /// "Test now" in network mode.
@@ -220,6 +223,8 @@ pub struct AwaydSettingsApp {
 const STATUS_POLL_SECS: f64 = 2.0;
 /// How often General asks the daemon for its memory and CPU time while shown.
 const RESOURCE_POLL_SECS: f64 = 5.0;
+/// While the country picker is shown without the daemon's list, ask again this often.
+const COUNTRY_RETRY_SECS: f64 = 30.0;
 
 /// Choices for `advanced.process_watch_seconds` (0 = off).
 const PROCESS_WATCH_CHOICES: [(u64, &str); 4] = [
@@ -549,6 +554,8 @@ impl AwaydSettingsApp {
             daemon_version: None,
             ctx: cc.egui_ctx.clone(),
             countries_job: None,
+            countries_loaded: false,
+            countries_requested_at: f64::NEG_INFINITY,
             refresh_job: None,
             probe_job: None,
             probe_what: String::new(),
@@ -634,7 +641,10 @@ impl AwaydSettingsApp {
         if let Some(result) = self.countries_job.as_ref().and_then(Job::poll) {
             self.countries_job = None;
             match result {
-                Ok(list) if !list.is_empty() => self.countries = list,
+                Ok(list) if !list.is_empty() => {
+                    self.countries = list;
+                    self.countries_loaded = true;
+                }
                 Ok(_) => {}
                 Err(e) => tracing::warn!("country list: {e:#}"),
             }
@@ -747,7 +757,35 @@ impl AwaydSettingsApp {
         }
     }
 
+    /// Ask the daemon for the country list in the background: it may download the list first
+    /// (up to 30 s). Until it arrives the picker keeps the current list.
+    fn request_country_list(&mut self) {
+        if self.countries_job.is_some() {
+            return;
+        }
+        self.countries_requested_at = self.frame_time;
+        self.countries_job = Some(Job::spawn(&self.rt, &self.ctx, async {
+            Ipc::new().list_countries().await
+        }));
+    }
+
+    /// The picker still shows only the built-in fallback (the daemon was busy, offline or
+    /// could not download the list): ask again every [`COUNTRY_RETRY_SECS`] while it is shown.
+    fn retry_country_list_if_missing(&mut self) {
+        if self.countries_loaded || !self.daemon_ok || self.countries_job.is_some() {
+            return;
+        }
+        let wait = self.countries_requested_at + COUNTRY_RETRY_SECS - self.frame_time;
+        if wait <= 0.0 {
+            self.request_country_list();
+        } else {
+            self.ctx
+                .request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        }
+    }
+
     fn region_pickers(&mut self, ui: &mut egui::Ui) -> bool {
+        self.retry_country_list_if_missing();
         const LABEL_W: f32 = 64.0;
         const CONTROL_W: f32 = 280.0;
         const GRID_SPACING: f32 = 8.0;
@@ -1600,13 +1638,7 @@ impl AwaydSettingsApp {
         let text = std::fs::read_to_string(paths::config_file()).map_err(|e| e.to_string());
         self.apply_loaded_config(resolve_loaded_config(file_exists, text));
         if self.daemon_ok {
-            // In the background: the daemon may download the list first (up to 30 s). Until
-            // it arrives the picker keeps the current list.
-            if self.countries_job.is_none() {
-                self.countries_job = Some(Job::spawn(&self.rt, &self.ctx, async {
-                    Ipc::new().list_countries().await
-                }));
-            }
+            self.request_country_list();
             for b in credential_backends() {
                 let stored = self
                     .rt

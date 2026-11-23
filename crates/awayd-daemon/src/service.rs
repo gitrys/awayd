@@ -61,9 +61,13 @@ impl SchedulerApi for SchedulerService {
     }
 
     async fn list_available_countries(&self) -> Vec<(String, String)> {
+        // An empty list tells the settings to keep their own and ask again later.
         holidays::sync::list_available_countries_cached()
             .await
-            .unwrap_or_default()
+            .unwrap_or_else(|e| {
+                tracing::warn!(target: "awayd::api", "ListAvailableCountries: {e}");
+                Vec::new()
+            })
     }
 
     async fn holiday_data_status(&self, country: &str) -> (bool, i32, i32, String, String) {
