@@ -34,7 +34,8 @@ cargo build --release
 2. Run `awayd.exe` — tray icon appears (left click: settings, right click: menu).
 3. Click the tray icon to open **Settings** (or run `awayd-settings.exe`).
 4. Complete the wizard: services (Steam on, Discord off by default; the Discord token is only
-   asked for when you switch Discord on), then the mode: work hours (country/region and work
+   asked for when you switch Discord on; see [discord-token.md](discord-token.md) for how to
+   get it), then the mode: work hours (country/region and work
    hours) or network presence (the device to watch, with "Test now"). Change everything later
    in the settings, or in `config.toml` (e.g. `[backends.discord]`, `[backends.steam]`,
    `enabled = true|false`).

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Guide with screenshots on how to get the Discord token and store it in awayd
+  ([docs/discord-token.md](docs/discord-token.md)), linked from the README, the install guide
+  and SECURITY.md.
+
 ## [0.3.0] - 2026-11-23
 
 ### Upgrading from 0.2.0

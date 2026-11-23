@@ -98,7 +98,8 @@ running processes, awayd idle over 60 s:
 3. Click the tray icon to open **Settings** (or run `awayd-settings.exe`) and complete the wizard:
    services, then the mode (work hours: country/region and work hours; network presence: the
    device to watch). The Discord token is only asked for when you switch Discord on (see the
-   warning above).
+   warning above); [docs/discord-token.md](docs/discord-token.md) shows step by step how to
+   get it.
 
    The services can be changed later in **Settings → Services** or in
    `config\config.toml`:
