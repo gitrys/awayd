@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use awayd_core::autostart::{self, AutostartState};
 use awayd_core::backends::{self, BackendInfo};
 use awayd_core::config::paths;
-use awayd_core::config::schema::{AppConfig, VacationEntry};
+use awayd_core::config::schema::{AppConfig, ProbeKind, VacationEntry, MIN_PROBE_INTERVAL_SECONDS};
 use awayd_core::StatusSnapshot;
+use awayd_ipc::ProbeHostResult;
 use chrono::{Datelike, NaiveDate};
 use eframe::egui;
 
@@ -175,6 +176,50 @@ pub struct AwaydSettingsApp {
     countries_job: Option<Job<Vec<(String, String)>>>,
     /// "Refresh holiday data" (downloads several years; can take minutes).
     refresh_job: Option<Job<String>>,
+    /// "Test now" in network mode.
+    probe_job: Option<Job<ProbeHostResult>>,
+    /// What was tested ("ping" / "port 22"), for the result text.
+    probe_what: String,
+    probe_result: Option<ProbeView>,
+}
+
+/// Result line of "Test now".
+struct ProbeView {
+    text: String,
+    ok: bool,
+}
+
+/// Text for a finished "Test now"; `what` is "ping" or "port N", `at` the time of day.
+fn probe_text(result: &Result<ProbeHostResult, String>, what: &str, at: &str) -> ProbeView {
+    match result {
+        Ok(r) if r.answered => ProbeView {
+            text: format!("Answered to {what} in {} ms · {at}", r.millis),
+            ok: true,
+        },
+        Ok(ProbeHostResult { error: Some(e), .. }) => ProbeView {
+            text: format!("Not checked: {e} · {at}"),
+            ok: false,
+        },
+        Ok(_) => ProbeView {
+            text: format!("No answer to {what} within 1 s · {at}"),
+            ok: false,
+        },
+        Err(e) => ProbeView {
+            text: format!("Test failed: {e}"),
+            ok: false,
+        },
+    }
+}
+
+/// "45 s", "2 min", "1 h 30 min".
+fn format_duration_short(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s} s"),
+        s if s < 3600 && s % 60 == 0 => format!("{} min", s / 60),
+        s if s < 3600 => format!("{} min {} s", s / 60, s % 60),
+        s if (s % 3600) / 60 == 0 => format!("{} h", s / 3600),
+        s => format!("{} h {} min", s / 3600, (s % 3600) / 60),
+    }
 }
 
 /// Decide which config the UI may edit.
@@ -335,6 +380,9 @@ impl AwaydSettingsApp {
             ctx: cc.egui_ctx.clone(),
             countries_job: None,
             refresh_job: None,
+            probe_job: None,
+            probe_what: String::new(),
+            probe_result: None,
         };
         app.reload();
         app
@@ -420,6 +468,12 @@ impl AwaydSettingsApp {
                 }
                 Err(e) => self.set_status_error(format!("Refresh failed: {e}")),
             }
+        }
+        if let Some(result) = self.probe_job.as_ref().and_then(Job::poll) {
+            self.probe_job = None;
+            let at = chrono::Local::now().format("%H:%M:%S").to_string();
+            let result = result.map_err(|e| format!("{e:#}"));
+            self.probe_result = Some(probe_text(&result, &self.probe_what, &at));
         }
     }
 
@@ -1323,8 +1377,7 @@ impl AwaydSettingsApp {
             self.set_status_error(format!("Not saved: {e}"));
             return;
         }
-        // `mode` is kept as loaded: network mode can only be set in config.toml so far and
-        // must not be switched off by an unrelated save.
+        // `mode` is saved as shown on the Mode page (loaded from config.toml, changed there).
         let toml = match toml::to_string_pretty(&self.config) {
             Ok(t) => t,
             Err(e) => {
@@ -1523,18 +1576,38 @@ impl eframe::App for AwaydSettingsApp {
 
 impl AwaydSettingsApp {
     fn wizard_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Setup wizard");
+        // Steps: 0 welcome, 1 services, 2 mode, then 3 region + 4 work hours (work hours mode)
+        // or 5 device (network mode).
+        let (number, title) = match self.wizard_step {
+            0 => (1, "Welcome"),
+            1 => (2, "Services"),
+            2 => (3, "Mode"),
+            3 => (4, "Region"),
+            4 => (5, "Work hours"),
+            _ => (4, "Device to watch"),
+        };
+        let total = if self.network_mode() { 4 } else { 5 };
+        card::page_header(
+            ui,
+            "Setup wizard",
+            &format!("Step {number} of {total}: {title}"),
+        );
         match self.wizard_step {
             0 => {
-                ui.label(
-                    "Welcome — configure automatic Discord/Steam status from your work schedule.",
-                );
+                card::card(ui, |ui| {
+                    ui.label(
+                        "awayd sets your Steam and Discord status to invisible while you work \
+                         and back to online afterwards. The next steps choose the services and \
+                         how awayd knows that you are at work.",
+                    );
+                });
+                ui.add_space(12.0);
                 if ui.button("Next").clicked() {
                     self.wizard_step = 1;
                 }
             }
             1 => {
-                // Switches are saved with the region/work hours steps and on "Finish".
+                // Switches are saved with the later steps and on "Finish".
                 self.services_ui(ui, "wiz_credential");
                 ui.horizontal(|ui| {
                     if ui.button("Back").clicked() {
@@ -1547,36 +1620,52 @@ impl AwaydSettingsApp {
                 });
             }
             2 => {
-                ui.label("Country and region (public holidays):");
-                if self.region_pickers(ui) {
-                    self.save_schedule_if_valid();
-                }
+                ui.label("How should awayd know that you are at work?");
+                ui.add_space(6.0);
+                self.mode_choice_ui(ui);
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Back").clicked() {
                         self.wizard_step = 1;
                     }
                     if ui.button("Next").clicked() {
-                        if let Err(e) = self.validate_before_save() {
-                            self.set_status_error(e);
-                        } else {
-                            self.wizard_step = 3;
-                        }
+                        self.wizard_step = if self.network_mode() { 5 } else { 3 };
                     }
                 });
             }
             3 => {
-                ui.label("Work hours (local time):");
-                let mut changed = false;
-                if show_weekday_schedule_grid(ui, "wiz_schedule", &mut self.schedule_grid) {
-                    changed = true;
-                }
-                if changed {
-                    self.config.schedule.days = Some(self.schedule_grid.commit_days_for_save());
-                    self.save_schedule_if_valid();
-                }
+                card::card(ui, |ui| {
+                    card::card_title(ui, "Country and region (public holidays)");
+                    if self.region_pickers(ui) {
+                        self.save_schedule_if_valid();
+                    }
+                });
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Back").clicked() {
                         self.wizard_step = 2;
+                    }
+                    if ui.button("Next").clicked() {
+                        if let Err(e) = self.validate_before_save() {
+                            self.set_status_error(e);
+                        } else {
+                            self.wizard_step = 4;
+                        }
+                    }
+                });
+            }
+            4 => {
+                card::card(ui, |ui| {
+                    card::card_title(ui, "Work hours (local time)");
+                    if show_weekday_schedule_grid(ui, "wiz_schedule", &mut self.schedule_grid) {
+                        self.config.schedule.days = Some(self.schedule_grid.commit_days_for_save());
+                        self.save_schedule_if_valid();
+                    }
+                });
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.wizard_step = 3;
                     }
                     if ui.button("Finish").clicked() {
                         self.save();
@@ -1584,7 +1673,27 @@ impl AwaydSettingsApp {
                     }
                 });
             }
-            _ => {}
+            _ => {
+                let mut changed = false;
+                card::card(ui, |ui| changed = self.network_device_ui(ui));
+                if changed {
+                    self.save_mode_if_complete();
+                }
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.wizard_step = 2;
+                    }
+                    if ui.button("Finish").clicked() {
+                        if self.mode_incomplete() {
+                            self.set_status_error("Enter the device to watch first.");
+                        } else {
+                            self.save();
+                            self.wizard = false;
+                        }
+                    }
+                });
+            }
         }
     }
 
@@ -1594,39 +1703,242 @@ impl AwaydSettingsApp {
             "Mode",
             "How awayd decides between invisible and online.",
         );
-        let network_active = self.config.mode.kind == "network";
-        card::card(ui, |ui| {
-            card::card_title(ui, "Mode");
-            ui.add_enabled_ui(false, |ui| {
-                let mut network = network_active;
-                ui.checkbox(&mut network, "Use network mode (coming soon)");
-            });
-            if network_active {
-                card::notice_text(
-                    ui,
-                    NoticeKind::Info,
-                    "Network mode is set in config.toml and stays active; the work hours below \
-                     are used only while it is off.",
-                );
-            }
-        });
+        let mut changed = self.mode_choice_ui(ui);
         ui.add_space(12.0);
-        let mut changed = false;
-        card::card(ui, |ui| {
-            card::card_title(ui, "Work hours");
-            card::secondary_label(
+        if self.network_mode() {
+            card::notice_text(
                 ui,
-                "Local time. A time is taken when you press Enter, leave the field or confirm \
-                 the clock.",
+                NoticeKind::Info,
+                "Work hours, public holidays and vacations are not used while network presence \
+                 is on. They stay saved and apply again when you switch back.",
             );
-            if show_weekday_schedule_grid(ui, "sched_days", &mut self.schedule_grid) {
-                self.config.schedule.days = Some(self.schedule_grid.commit_days_for_save());
-                changed = true;
-            }
-        });
+            ui.add_space(12.0);
+            card::card(ui, |ui| changed |= self.network_device_ui(ui));
+            ui.add_space(12.0);
+            card::card(ui, |ui| changed |= self.network_timing_ui(ui));
+        } else {
+            card::card(ui, |ui| {
+                card::card_title(ui, "Work hours");
+                card::secondary_label(
+                    ui,
+                    "Local time. A time is taken when you press Enter, leave the field or \
+                     confirm the clock.",
+                );
+                if show_weekday_schedule_grid(ui, "sched_days", &mut self.schedule_grid) {
+                    self.config.schedule.days = Some(self.schedule_grid.commit_days_for_save());
+                    changed = true;
+                }
+            });
+        }
         if changed {
+            self.save_mode_if_complete();
+        }
+    }
+
+    fn network_mode(&self) -> bool {
+        self.config.mode.kind == "network"
+    }
+
+    /// Network mode needs a host; until one is entered the choice is shown but not saved
+    /// (saving would fail the config check).
+    fn mode_incomplete(&self) -> bool {
+        self.network_mode() && self.config.mode.work_host.trim().is_empty()
+    }
+
+    fn save_mode_if_complete(&mut self) {
+        if !self.mode_incomplete() {
             self.save_schedule_if_valid();
         }
+    }
+
+    /// The two mode cards; returns true when the mode changed.
+    fn mode_choice_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let network = self.network_mode();
+        let mut pick = None;
+        ui.columns(2, |cols| {
+            if card::choice_card(
+                &mut cols[0],
+                !network,
+                "Work hours",
+                "Invisible during your work hours, online outside them, on public holidays and \
+                 on vacations.",
+            )
+            .clicked()
+            {
+                pick = Some("schedule");
+            }
+            if card::choice_card(
+                &mut cols[1],
+                network,
+                "Network presence",
+                "Invisible while a device on your network answers, e.g. your work laptop. Work \
+                 hours are not used.",
+            )
+            .clicked()
+            {
+                pick = Some("network");
+            }
+        });
+        match pick {
+            Some(kind) if kind != self.config.mode.kind => {
+                self.config.mode.kind = kind.to_string();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Host, check method and "Test now". Returns true when a value should be saved.
+    fn network_device_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let p = theme::palette(ui.ctx());
+        let mut save = false;
+        card::card_title(ui, "Device to watch");
+        card::secondary_label(
+            ui,
+            "While this device answers, you count as at work: awayd sets you invisible.",
+        );
+        card::divider(ui);
+        ui.label(egui::RichText::new("Host").strong());
+        ui.horizontal(|ui| {
+            let host = ui.add(
+                egui::TextEdit::singleline(&mut self.config.mode.work_host)
+                    .hint_text("e.g. 192.168.1.50 or work-laptop")
+                    .desired_width(260.0),
+            );
+            if host.lost_focus() {
+                save = true;
+                self.probe_result = None;
+            }
+            let testing = self.probe_job.is_some();
+            let can_test =
+                self.daemon_ok && !testing && !self.config.mode.work_host.trim().is_empty();
+            let label = if testing { "Testing…" } else { "Test now" };
+            let test = ui
+                .add_enabled(can_test, egui::Button::new(label))
+                .on_disabled_hover_text(if self.daemon_ok {
+                    "Enter a host first"
+                } else {
+                    "awayd is not running"
+                });
+            if test.clicked() {
+                self.start_probe_test();
+            }
+            if testing {
+                ui.spinner();
+            }
+        });
+        card::secondary_label(
+            ui,
+            "IP address or host name of a device that is only on while you work. Give it a \
+             fixed IP address in your router.",
+        );
+        if self.config.mode.work_host.trim().is_empty() {
+            ui.colored_label(
+                p.warn_fg,
+                "Enter the device to watch. Network presence is saved once a host is set.",
+            );
+        }
+        if let Some(result) = &self.probe_result {
+            let color = if result.ok { p.success_fg } else { p.error_fg };
+            ui.colored_label(color, &result.text);
+        }
+
+        card::divider(ui);
+        ui.label(egui::RichText::new("Check by").strong());
+        let before = self.config.mode.probe;
+        ui.radio_value(&mut self.config.mode.probe, ProbeKind::Ping, "Ping");
+        ui.indent("ping_help", |ui| {
+            card::secondary_label(
+                ui,
+                "ICMP echo, no administrator rights. Works when the device's firewall blocks \
+                 all ports.",
+            );
+        });
+        ui.radio_value(&mut self.config.mode.probe, ProbeKind::Tcp, "TCP port");
+        ui.indent("tcp_help", |ui| {
+            card::secondary_label(
+                ui,
+                "Connects to a port on the device. Use this when ping is blocked on your network.",
+            );
+            ui.add_enabled_ui(self.config.mode.probe == ProbeKind::Tcp, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Port");
+                    let port = ui.add(
+                        egui::DragValue::new(&mut self.config.mode.work_port).range(1..=65535),
+                    );
+                    if port.drag_stopped() || port.lost_focus() {
+                        save = true;
+                    }
+                });
+            });
+        });
+        if self.config.mode.probe != before {
+            self.probe_result = None;
+            save = true;
+        }
+        save
+    }
+
+    /// Check interval and override duration. Returns true when a value should be saved.
+    fn network_timing_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut save = false;
+        card::card_title(ui, "Timing");
+        let interval = self.config.mode.probe_interval_seconds;
+        card::row(
+            ui,
+            "Check every",
+            Some(&format!(
+                "At least {MIN_PROBE_INTERVAL_SECONDS} s. You count as away after 2 missed checks \
+                 in a row, here after about {}.",
+                format_duration_short(interval * 2)
+            )),
+            |ui| {
+                let r = ui.add(
+                    egui::DragValue::new(&mut self.config.mode.probe_interval_seconds)
+                        .range(MIN_PROBE_INTERVAL_SECONDS..=3600)
+                        .suffix(" s"),
+                );
+                if r.drag_stopped() || r.lost_focus() {
+                    save = true;
+                }
+            },
+        );
+        card::row(
+            ui,
+            "Override “until the next change” lasts",
+            Some(
+                "Network presence has no scheduled changes, so this ends such an override. Up \
+                 to 168 hours.",
+            ),
+            |ui| {
+                let r = ui.add(
+                    egui::DragValue::new(&mut self.config.mode.network_override_ttl_hours)
+                        .range(0.5..=168.0)
+                        .speed(0.25)
+                        .suffix(" h"),
+                );
+                if r.drag_stopped() || r.lost_focus() {
+                    save = true;
+                }
+            },
+        );
+        save
+    }
+
+    /// Ask the daemon to check the host once (in the background; can take up to a few seconds
+    /// with name lookup).
+    fn start_probe_test(&mut self) {
+        let host = self.config.mode.work_host.trim().to_string();
+        let port = self.config.mode.work_port;
+        let (probe, what) = match self.config.mode.probe {
+            ProbeKind::Ping => ("ping", "ping".to_string()),
+            ProbeKind::Tcp => ("tcp", format!("port {port}")),
+        };
+        self.probe_result = None;
+        self.probe_what = what;
+        self.probe_job = Some(Job::spawn(&self.rt, &self.ctx, async move {
+            Ipc::new().probe_host(&host, probe, port).await
+        }));
     }
 
     fn days_off_page(&mut self, ui: &mut egui::Ui) {
@@ -1676,7 +1988,7 @@ impl AwaydSettingsApp {
             card::row(
                 ui,
                 "Setup wizard",
-                Some("Services, region and work hours step by step"),
+                Some("Services, mode, region and work hours step by step"),
                 |ui| {
                     if ui.button("Run setup wizard again…").clicked() {
                         self.wizard = true;
@@ -1920,6 +2232,44 @@ mod tests {
     fn read_error_blocks_saving() {
         let r = resolve_loaded_config(true, Err("access denied".into()));
         assert_eq!(r.unwrap_err(), "access denied");
+    }
+
+    #[test]
+    fn probe_texts() {
+        let ok = Ok(ProbeHostResult {
+            answered: true,
+            millis: 2,
+            error: None,
+        });
+        let v = probe_text(&ok, "ping", "00:41:05");
+        assert!(v.ok);
+        assert_eq!(v.text, "Answered to ping in 2 ms · 00:41:05");
+        let silent = Ok(ProbeHostResult {
+            answered: false,
+            millis: 1000,
+            error: None,
+        });
+        assert_eq!(
+            probe_text(&silent, "port 22", "t").text,
+            "No answer to port 22 within 1 s · t"
+        );
+        let unknown = Ok(ProbeHostResult {
+            answered: false,
+            millis: 3,
+            error: Some("host name not found".into()),
+        });
+        let v = probe_text(&unknown, "ping", "t");
+        assert!(!v.ok);
+        assert_eq!(v.text, "Not checked: host name not found · t");
+    }
+
+    #[test]
+    fn short_durations() {
+        assert_eq!(format_duration_short(45), "45 s");
+        assert_eq!(format_duration_short(120), "2 min");
+        assert_eq!(format_duration_short(150), "2 min 30 s");
+        assert_eq!(format_duration_short(7200), "2 h");
+        assert_eq!(format_duration_short(5400), "1 h 30 min");
     }
 
     #[test]

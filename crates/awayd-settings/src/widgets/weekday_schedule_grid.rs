@@ -182,8 +182,10 @@ pub fn show_weekday_schedule_grid(
     });
 
     super::card::divider(ui);
+    // Effective hours per day (linked: the master times) for the day bars.
+    let effective = state.commit_days_for_save();
     egui::Grid::new(format!("{id_source}_grid"))
-        .num_columns(4)
+        .num_columns(5)
         .spacing([12.0, 4.0])
         .min_col_width(72.0)
         .show(ui, |ui| {
@@ -191,6 +193,7 @@ pub fn show_weekday_schedule_grid(
             ui.label(egui::RichText::new("Work day").strong());
             ui.label(egui::RichText::new("Start").strong());
             ui.label(egui::RichText::new("End").strong());
+            ui.label(egui::RichText::new("Day at a glance").strong());
             ui.end_row();
 
             for i in 0..7 {
@@ -224,6 +227,7 @@ pub fn show_weekday_schedule_grid(
                         changed = true;
                     }
                 });
+                day_bar(ui, &effective[i]);
                 ui.end_row();
             }
         });
@@ -231,10 +235,52 @@ pub fn show_weekday_schedule_grid(
     changed
 }
 
+const DAY_BAR_W: f32 = 150.0;
+
+/// 0–24 h bar with the work window in the accent colour; "Online all day" for days off.
+fn day_bar(ui: &mut egui::Ui, day: &DayWindow) {
+    let p = crate::theme::palette(ui.ctx());
+    if !day.enabled {
+        super::card::secondary_label(ui, "Online all day");
+        return;
+    }
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(DAY_BAR_W, 10.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 5.0, p.divider);
+    if let Some((from, to)) = day_fraction(day) {
+        let window = egui::Rect::from_x_y_ranges(
+            egui::lerp(rect.x_range(), from)..=egui::lerp(rect.x_range(), to),
+            rect.y_range(),
+        );
+        painter.rect_filled(window, 5.0, p.accent);
+    }
+    response.on_hover_text(format!(
+        "Invisible {} – {}",
+        day.start.format("%H:%M"),
+        day.end.format("%H:%M")
+    ));
+}
+
+/// Start and end as fractions of the day; `None` when the window is empty.
+fn day_fraction(day: &DayWindow) -> Option<(f32, f32)> {
+    use chrono::Timelike;
+    let frac = |t: NaiveTime| t.num_seconds_from_midnight() as f32 / 86_400.0;
+    (day.end > day.start).then(|| (frac(day.start), frac(day.end)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use awayd_core::schedule::default_week_days;
+
+    #[test]
+    fn day_bar_covers_the_work_window() {
+        let mut day = default_week_days()[0];
+        assert_eq!(day_fraction(&day), Some((9.0 / 24.0, 17.0 / 24.0)));
+        day.end = day.start;
+        assert_eq!(day_fraction(&day), None);
+    }
 
     #[test]
     fn from_default_days() {

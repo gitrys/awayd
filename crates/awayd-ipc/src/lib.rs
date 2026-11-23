@@ -5,6 +5,6 @@ pub mod client;
 pub mod protocol;
 pub mod server;
 
-pub use client::{HolidayRow, ListHolidaysResponse, SchedulerClient};
+pub use client::{HolidayRow, ListHolidaysResponse, ProbeHostResult, SchedulerClient};
 pub use protocol::{pipe_name, JsonRpcRequest, JsonRpcResponse};
 pub use server::{run_pipe_server, SchedulerApi};

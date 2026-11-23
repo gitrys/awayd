@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings: theme choice under **General → Display** ("Use Windows setting", "Light",
   "Dark"), stored in `settings_ui.json`. Until now the window followed the Windows app theme
   without a choice.
+- Network mode in the settings: **Mode** offers "Work hours" or "Network presence"; for the
+  latter the host, the check (ping or TCP port), the check interval and the override duration
+  are set there, with the same limits as `awayctl validate`. **Test now** asks awayd to check
+  the host once (new named-pipe method `probe_host`; it does not change the status). Until a
+  host is entered the choice is shown but not saved.
+- The setup wizard asks for the mode and, for network presence, for the device instead of
+  region and work hours.
+- Work hours table: a "Day at a glance" bar per day.
 
 ### Changed
 

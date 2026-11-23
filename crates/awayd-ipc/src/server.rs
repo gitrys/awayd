@@ -33,6 +33,9 @@ pub trait SchedulerApi: Send + Sync {
     async fn apply_now(&self) -> bool;
     async fn set_override(&self, mode: &str, ttl_seconds: u32) -> bool;
     async fn clear_override(&self) -> bool;
+    /// Check `host` once ("ping" or "tcp" with `port`) without changing the network-mode
+    /// presence; returns a [`crate::client::ProbeHostResult`] as JSON.
+    async fn probe_host(&self, host: &str, probe: &str, port: u16) -> Value;
     fn quit(&self);
 }
 
@@ -212,6 +215,17 @@ async fn dispatch(api: &dyn SchedulerApi, req: &JsonRpcRequest) -> JsonRpcRespon
             Ok(json!(api.set_override(mode, ttl).await))
         }
         "clear_override" => Ok(json!(api.clear_override().await)),
+        "probe_host" => {
+            let port = req
+                .params
+                .get("port")
+                .and_then(|v| v.as_u64())
+                .and_then(|p| u16::try_from(p).ok())
+                .unwrap_or(0);
+            Ok(api
+                .probe_host(str_param(req, "host"), str_param(req, "probe"), port)
+                .await)
+        }
         "quit" => {
             api.quit();
             Ok(json!(true))
@@ -278,6 +292,9 @@ mod tests {
             unreachable!()
         }
         async fn clear_override(&self) -> bool {
+            unreachable!()
+        }
+        async fn probe_host(&self, _: &str, _: &str, _: u16) -> Value {
             unreachable!()
         }
         fn quit(&self) {}

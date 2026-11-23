@@ -172,6 +172,22 @@ impl SchedulerClient {
         serde_json::from_value(v).context("list_holidays parse")
     }
 
+    /// One check of `host` by the daemon ("ping", or "tcp" on `port`), e.g. for "Test now".
+    pub async fn probe_host(
+        &mut self,
+        host: &str,
+        probe: &str,
+        port: u16,
+    ) -> Result<ProbeHostResult> {
+        let v = self
+            .call(
+                "probe_host",
+                json!({ "host": host, "probe": probe, "port": port }),
+            )
+            .await?;
+        serde_json::from_value(v).context("probe_host parse")
+    }
+
     pub async fn ping(&mut self) -> Result<bool> {
         match self.call("ping", json!({})).await {
             Ok(v) => Ok(v.as_bool().unwrap_or(true)),
@@ -195,6 +211,18 @@ impl HolidayRow {
     pub fn has_proper_name(&self) -> bool {
         self.local_name.is_some()
     }
+}
+
+/// Result of `probe_host`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProbeHostResult {
+    pub answered: bool,
+    /// Time for name lookup and check.
+    pub millis: u64,
+    /// Why there was no check (e.g. the name could not be resolved); `None` when the host
+    /// was checked, answered or not.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

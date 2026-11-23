@@ -178,3 +178,20 @@ button are under **General**.
 - **Logs:** the page opens at the newest line and follows new lines; scrolling up stops
   following; "Verbose" off hides DEBUG lines (e.g. hyper_util), "Info" off hides INFO lines;
   "Pop out" opens the separate window with the same table.
+
+## 2026-11-23 – Plan UI-2 (network mode in the settings)
+
+- **Switch mode:** Mode → "Network presence" → host field empty → warning, nothing saved
+  (`config.toml` still `kind = "schedule"`); enter your work PC's IP, leave the field →
+  "saved", `config.toml` has `kind = "network"` and `work_host`; `awayctl doctor` shows
+  `mode_kind: network`. Back to "Work hours" → saved, the week table is shown again.
+- **Test now:** with the work PC on → "Answered to ping in N ms"; with an unknown name →
+  "Not checked: host name not found"; with the PC off → "No answer to ping within 1 s"; the
+  status in the tray does not change by testing.
+- **Check by:** "TCP port" enables the port field; change port, interval and override hours
+  (dragging or typing + Enter) → saved; values outside the limits cannot be entered.
+- **Wizard:** General → "Run setup wizard again…" → step 3 "Mode"; "Network presence" → next
+  step is the device (step 4 of 4), "Finish" without a host shows an error; "Work hours" →
+  region and work hours as before (5 steps).
+- **Day at a glance:** each work day shows its window on a 0–24 h bar (hover shows the times);
+  with "Same hours" on, the bars follow the Start/End row.

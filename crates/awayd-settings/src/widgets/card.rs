@@ -76,6 +76,64 @@ pub fn row(
     });
 }
 
+/// Selectable card with a radio mark, title and description (one of several choices).
+/// Returns the response of the whole card; `clicked()` selects it.
+pub fn choice_card(
+    ui: &mut egui::Ui,
+    selected: bool,
+    title: &str,
+    description: &str,
+) -> egui::Response {
+    let p = theme::palette(ui.ctx());
+    let (fill, stroke) = if selected {
+        (p.info_bg, Stroke::new(2.0_f32, p.accent))
+    } else {
+        (p.card, Stroke::new(1.0_f32, p.control_border))
+    };
+    let inner = egui::Frame::none()
+        .fill(fill)
+        .stroke(stroke)
+        .rounding(8.0)
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                let (mark, _) =
+                    ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                let c = mark.center();
+                if selected {
+                    ui.painter()
+                        .circle_stroke(c, 8.0, Stroke::new(2.0_f32, p.accent));
+                    ui.painter().circle_filled(c, 4.0, p.accent);
+                } else {
+                    ui.painter()
+                        .circle_stroke(c, 8.0, Stroke::new(1.5_f32, p.text_secondary));
+                }
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(title).strong());
+                    secondary_label(ui, description);
+                });
+            });
+        });
+    let response = ui.interact(
+        inner.response.rect,
+        ui.id().with(("choice_card", title)),
+        egui::Sense::click(),
+    );
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, selected, title)
+    });
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            inner.response.rect.expand(2.0),
+            9.0,
+            Stroke::new(2.0_f32, p.text),
+        );
+    }
+    response
+}
+
 #[derive(Clone, Copy)]
 pub enum NoticeKind {
     Info,

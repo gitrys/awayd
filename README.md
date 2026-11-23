@@ -73,11 +73,14 @@ owners and are used here only to describe what the program works with.
 
 More details: [docs/install-windows.md](docs/install-windows.md).
 
-## Network mode (optional, config file only)
+## Network mode (optional)
 
 Instead of work hours, awayd can follow whether a device is present: present → invisible,
 absent → online. Example: your work laptop sits in your home network (connected to the
 company by VPN); while it is switched on, you count as at work.
+
+Choose **Settings → Mode → Network presence**, enter the device and use **Test now** to check
+it. The same settings in `config.toml`:
 
 ```toml
 [mode]
@@ -93,8 +96,8 @@ network_override_ttl_hours = 8  # how long an override "until the next change" l
 - One answer means present; two failed checks in a row mean absent, so switching back to
   online takes up to about two check intervals.
 - A device counts as present as soon as it is switched on (also at its login screen).
-- The settings window does not offer network mode yet ("coming soon") but keeps it when
-  saving.
+- Work hours, public holidays and vacations are not used while network mode is on; they stay
+  saved for when you switch back.
 
 ## Programs
 

@@ -65,6 +65,57 @@ pub async fn is_work_host_reachable(mode: &ModeSection) -> bool {
     present
 }
 
+/// Result of one check for "Test now" in the settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeOutcome {
+    pub answered: bool,
+    pub elapsed: Duration,
+    /// Why the host could not be checked at all.
+    pub error: Option<String>,
+}
+
+/// Check `host` once with `probe`. Unlike [`is_work_host_reachable`] this neither uses nor
+/// changes the cached presence, so testing a host never switches the status.
+pub async fn probe_once(host: &str, probe: ProbeKind, port: u16) -> ProbeOutcome {
+    let start = Instant::now();
+    let failed = |error: &str| ProbeOutcome {
+        answered: false,
+        elapsed: start.elapsed(),
+        error: Some(error.to_string()),
+    };
+    let host = host.trim();
+    if host.is_empty() {
+        return failed("no host given");
+    }
+    let lookup_port = match probe {
+        ProbeKind::Tcp => port,
+        ProbeKind::Ping => 0,
+    };
+    let Some(addr) = resolve(host, lookup_port).await else {
+        return failed("host name not found");
+    };
+    let answered = match (probe, addr.ip()) {
+        (ProbeKind::Tcp, _) => timeout(PROBE_TIMEOUT, TcpStream::connect(addr))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .is_some(),
+        (ProbeKind::Ping, IpAddr::V4(ip)) => {
+            tokio::task::spawn_blocking(move || ping_v4(ip, PROBE_TIMEOUT))
+                .await
+                .unwrap_or(false)
+        }
+        (ProbeKind::Ping, IpAddr::V6(_)) => {
+            return failed("ping supports IPv4 addresses only");
+        }
+    };
+    ProbeOutcome {
+        answered,
+        elapsed: start.elapsed(),
+        error: None,
+    }
+}
+
 /// First address of `host` (asynchronous lookup; the blocking `to_socket_addrs` used to stall
 /// a Tokio worker for the whole DNS timeout).
 async fn resolve(host: &str, port: u16) -> Option<SocketAddr> {
@@ -160,5 +211,23 @@ mod tests {
     async fn ping_probe_resolves_names() {
         assert!(probe_ping("localhost").await || probe_ping("127.0.0.1").await);
         assert!(!probe_ping("host.invalid").await);
+    }
+
+    #[tokio::test]
+    async fn probe_once_reports_answer_and_errors() {
+        let ok = probe_once("127.0.0.1", ProbeKind::Ping, 0).await;
+        assert!(ok.answered && ok.error.is_none(), "{ok:?}");
+        let missing = probe_once("host.invalid", ProbeKind::Ping, 0).await;
+        assert!(!missing.answered);
+        assert_eq!(missing.error.as_deref(), Some("host name not found"));
+        let empty = probe_once("  ", ProbeKind::Tcp, 22).await;
+        assert_eq!(empty.error.as_deref(), Some("no host given"));
+    }
+
+    #[tokio::test]
+    async fn probe_once_leaves_the_presence_cache_alone() {
+        *STATE.lock().unwrap() = None;
+        probe_once("127.0.0.1", ProbeKind::Ping, 0).await;
+        assert!(STATE.lock().unwrap().is_none());
     }
 }

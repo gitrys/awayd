@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use awayd_core::config::paths;
-use awayd_core::config::schema::AppConfig;
+use awayd_core::config::schema::{AppConfig, ProbeKind};
 use awayd_ipc::SchedulerApi;
 use chrono::Datelike;
 use tokio::sync::RwLock;
@@ -243,6 +243,28 @@ impl SchedulerApi for SchedulerService {
         }
         self.poke.poke_immediate();
         true
+    }
+
+    async fn probe_host(&self, host: &str, probe: &str, port: u16) -> serde_json::Value {
+        let kind = if probe.eq_ignore_ascii_case("tcp") {
+            ProbeKind::Tcp
+        } else {
+            ProbeKind::Ping
+        };
+        let out = crate::network_probe::probe_once(host, kind, port).await;
+        tracing::info!(
+            target: "awayd::api",
+            probe,
+            answered = out.answered,
+            millis = out.elapsed.as_millis() as u64,
+            "ProbeHost requested"
+        );
+        serde_json::to_value(awayd_ipc::ProbeHostResult {
+            answered: out.answered,
+            millis: out.elapsed.as_millis() as u64,
+            error: out.error,
+        })
+        .unwrap_or(serde_json::Value::Null)
     }
 
     async fn clear_override(&self) -> bool {

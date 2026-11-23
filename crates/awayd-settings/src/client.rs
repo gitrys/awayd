@@ -51,6 +51,15 @@ impl Ipc {
         self.inner.refresh_holiday_data(country).await
     }
 
+    pub async fn probe_host(
+        &mut self,
+        host: &str,
+        probe: &str,
+        port: u16,
+    ) -> Result<awayd_ipc::ProbeHostResult> {
+        self.inner.probe_host(host, probe, port).await
+    }
+
     /// Daemon status JSON (`StatusSnapshot`).
     pub async fn status(&mut self) -> Result<String> {
         self.inner.status().await
