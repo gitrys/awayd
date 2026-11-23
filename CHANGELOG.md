@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-23
+
+### Upgrading from 0.2.0
+
+- Replace all three programs (`awayd.exe`, `awayd-settings.exe`, `awayctl.exe`) together:
+  the settings use new named-pipe methods (`probe_host`, `resource_use`) that an awayd 0.2.0
+  does not know.
+- `config.toml`, the Discord token and the saved state are kept; the new setting
+  `advanced.process_watch_seconds` defaults to 5 s (0.2.0 checked every 2 s).
+- Windows may show the old program icon from its icon cache for a while; re-pin a shortcut
+  or restart Explorer to see the new one.
+
 ### Added
 
 - Settings: theme choice under **General → Display** ("Use Windows setting", "Light",
@@ -33,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file", setup wizard) and **About** (versions, license, project page).
 - "Start awayd" in the sidebar when awayd is not running, and "Restart awayd" in the notice
   shown when the running awayd.exe is another version; "Open log folder" on the Logs page.
+- New setting `advanced.process_watch_seconds` (2–60 s, 0 = off; default 5), in the settings
+  under **General → Advanced → Watch for program starts**.
+- **General → Resource use** shows awayd's memory and CPU time since start (asked for only
+  while the page is open; new named-pipe method `resource_use`).
+- `awayd-settings --page <page>` opens a page directly; a second start brings the open
+  settings window to the front instead of doing nothing.
 
 ### Changed
 
@@ -50,21 +68,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drop-down fields; each service has a short description.
 - Logs page: a table with time, level, source and message; separate filters for Verbose
   (DEBUG/TRACE, off by default), Info, Warnings and Errors; "Pop out" next to the title.
-
 - New app icon (light-blue tile with a half-filled circle, the mark of the settings sidebar)
-  for all three programs and the settings window's title bar and taskbar button; the tray
-  icons are unchanged.
+  for all three programs and the settings window's title bar and taskbar button.
 - Settings: the window cannot be made smaller than 896×640; the General page uses two
   columns only when there is room; rows put wide controls (theme buttons, zoom slider) under
   their text.
-
 - Less load while idle: awayd notices program starts by comparing the list of process IDs
   and reads the names of new processes only (a full process snapshot with all names took
   about 7.6 ms per check, the list about 0.03 ms). The check runs every 5 s instead of 2 s,
   only for programs of switched-on services, and rests completely when there are none. The
-  background runtime uses 2 worker threads instead of one per CPU core.
-- New setting `advanced.process_watch_seconds` (2–60 s, 0 = off; default 5), in the settings
-  under **General → Advanced → Watch for program starts**.
+  background runtime uses 2 worker threads instead of one per CPU core. Measured idle over
+  60 s: 297 ms CPU per minute and 37 threads before, below the measurement resolution and 9
+  threads after.
 - New tray icon: a one-colour glyph (white on a dark, black on a light taskbar, following the
   Windows setting at once) whose shape shows the state: empty ring = online, half-filled
   circle = invisible, dashed ring = status unknown; a blue dot marks an override, a yellow
@@ -77,11 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one is active, "Apply now", "Open settings…", "Quit". The version line and "More…" are
   gone. Menus are dark in Windows dark mode. Left click on the icon opens the settings, right
   click the menu. The tooltip says the state in plain words ("awayd · Invisible until 17:00
-  (work hours)").
-- `awayd-settings --page <page>` opens a page directly; a second start brings the open
-  settings window to the front instead of doing nothing.
-- **General → Resource use** shows awayd's memory and CPU time since start (asked for only
-  while the page is open; new named-pipe method `resource_use`).
+  (work hours)"), shortened to the 64 characters the taskbar shows.
 
 ### Fixed
 
@@ -228,6 +239,7 @@ First public release of awayd for Windows.
   only manages Steam.
 - The executables are not code-signed yet; Windows SmartScreen may warn on first start.
 
-[Unreleased]: https://github.com/gitrys/awayd/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gitrys/awayd/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gitrys/awayd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gitrys/awayd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gitrys/awayd/releases/tag/v0.1.0

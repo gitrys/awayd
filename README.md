@@ -14,10 +14,6 @@ overrides ("stay invisible for 2 hours"). Instead of work hours it can also foll
 your network, e.g. your work laptop. It is built to run next to games: it uses about 20 MB of
 memory and practically no CPU while idle.
 
-> [!NOTE]
-> The screenshots show the current development version (`main`). The latest release,
-> v0.2.0, does not have the redesigned settings window and tray yet.
-
 > [!WARNING]
 > **Discord: use at your own risk.** awayd changes your Discord status through Discord's web API
 > with **your user token** (the token of your normal Discord account) and a browser user agent.
