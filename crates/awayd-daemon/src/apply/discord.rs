@@ -9,6 +9,8 @@ use reqwest::{Client, StatusCode};
 use serde_json::json;
 use tracing::warn;
 
+use crate::error_chain;
+
 fn http_client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -104,14 +106,14 @@ async fn patch_status_once(auth_token: &str, online: bool) -> Result<String, Dis
         .body(body)
         .send()
         .await
-        .map_err(|e| DiscordError::Transport(e.to_string()))?;
+        .map_err(|e| DiscordError::Transport(error_chain(e)))?;
 
     let headers = resp.headers().clone();
     let code = resp.status();
     let text = resp
         .text()
         .await
-        .map_err(|e| DiscordError::Transport(e.to_string()))?;
+        .map_err(|e| DiscordError::Transport(error_chain(e)))?;
     if code.is_success() {
         return Ok(format!("HTTP {}", code));
     }

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Discord and holiday download errors now name the underlying cause (e.g. DNS lookup, refused
+  connection, TLS) in the log and in the error shown to the user. Before, they only said
+  "error sending request for url (…)", so a failure after a restart could not be told apart.
+
 ## [0.3.1] - 2026-11-23
 
 ### Upgrading from 0.3.0

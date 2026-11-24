@@ -7,6 +7,7 @@ use std::time::Duration;
 use reqwest::blocking::Client as BlockingClient;
 
 use super::types::{AvailableCountry, PublicHoliday};
+use crate::error_chain;
 
 fn base_url() -> String {
     std::env::var("AWAYD_NAGER_API_BASE")
@@ -36,12 +37,11 @@ pub fn fetch_available_countries_blocking() -> Result<Vec<AvailableCountry>, Str
     let resp = blocking_http_client()
         .get(&url)
         .send()
-        .map_err(|e| e.to_string())?;
+        .map_err(error_chain)?;
     if !resp.status().is_success() {
         return Err(format!("AvailableCountries HTTP {}", resp.status()));
     }
-    resp.json::<Vec<AvailableCountry>>()
-        .map_err(|e| e.to_string())
+    resp.json::<Vec<AvailableCountry>>().map_err(error_chain)
 }
 
 pub fn fetch_public_holidays_blocking(
@@ -53,9 +53,9 @@ pub fn fetch_public_holidays_blocking(
     let resp = blocking_http_client()
         .get(&url)
         .send()
-        .map_err(|e| e.to_string())?;
+        .map_err(error_chain)?;
     if !resp.status().is_success() {
         return Err(format!("PublicHolidays/{year}/{cc} HTTP {}", resp.status()));
     }
-    resp.json::<Vec<PublicHoliday>>().map_err(|e| e.to_string())
+    resp.json::<Vec<PublicHoliday>>().map_err(error_chain)
 }
